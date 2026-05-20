@@ -1,0 +1,132 @@
+# arty
+
+Fetches public-domain impressionist and post-impressionist paintings from the
+Art Institute of Chicago and composites them into museum-style framed
+presentations sized for a 4K TV (3840×2160).
+
+---
+
+## Project layout
+
+```
+arty/
+├── fetch_artic.py      # Download artwork + metadata from the ARTIC API
+├── wood_texture.py     # Procedural wood-grain texture module
+├── composite.py        # Composite artwork into framed 4K JPEGs
+
+/Users/paulf/arty/
+├── artic/              # Raw downloads
+│   └── {artist}/
+│       ├── image/      # Full-size JPEGs from IIIF
+│       └── meta/       # Companion JSON metadata
+└── processed/          # Framed 4K output
+    └── {artist}/
+        └── {stem}.jpg
+```
+
+---
+
+## Requirements
+
+```
+pip install requests Pillow numpy
+```
+
+Python 3.11+ is required (type-annotation syntax).
+
+---
+
+## Usage
+
+### 1 — Fetch artwork
+
+Downloads 40 public-domain impressionist and post-impressionist works from the
+[Art Institute of Chicago open-access API](https://api.artic.edu/docs).
+
+```bash
+python3 fetch_artic.py
+```
+
+Images land in `/Users/paulf/arty/artic/` mirrored by artist name.
+Re-runs are idempotent — existing files are skipped.
+
+### 2 — Generate framed presentations
+
+```bash
+python3 composite.py [--input DIR] [--output DIR] [--style walnut|oak]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--input`  / `-i` | `/Users/paulf/arty/artic`     | Root of downloaded artwork |
+| `--output` / `-o` | `/Users/paulf/arty/processed` | Output directory           |
+| `--style`  / `-s` | `walnut`                      | Frame wood style           |
+
+Each input image produces one 3840×2160 JPEG.  Processing all 40 images
+takes roughly 25 seconds on Apple Silicon.
+
+### 3 — Inspect wood textures
+
+```bash
+python3 wood_texture.py [outdir]
+```
+
+Saves four 400×400 PNG samples (walnut/oak × horizontal/vertical grain) to
+`outdir` (default: current directory) for visual inspection.
+
+---
+
+## Frame design
+
+```
+┌─────────────────────────────────────────────────────────┐  ← near-black (#111111)
+│  ┌───────────────────────────────────────────────────┐  │
+│  │  wood frame rail  (100 px, mitered 45° corners)   │  │
+│  │  ┌─────────────────────────────────────────────┐  │  │
+│  │  │  warm off-white mat  (72 px)                │  │  │
+│  │  │  ┌───────────────────────────────────────┐  │  │  │
+│  │  │  │                                       │  │  │  │
+│  │  │  │             artwork                   │  │  │  │
+│  │  │  │                                       │  │  │  │
+│  │  │  └───────────────────────────────────────┘  │  │  │
+│  │  │                          ┌────────────────┐  │  │  │
+│  │  │                          │ Title          │  │  │  │
+│  │  │                          │ Artist · Date  │  │  │  │
+│  │  │                          └────────────────┘  │  │  │
+│  │  └─────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Wood texture** — `wood_texture.py`
+
+Grain is synthesised from fractional Brownian motion (four octaves of
+bilinearly-interpolated value noise). A large-scale warp layer bends the
+annual-ring bands; a fine-scale layer adds fibre streaks. Ring bands run
+perpendicular to the grain direction so horizontal rails show horizontal
+banding and vertical rails show vertical banding. Two styles are supported:
+
+- **walnut** — dark heartwood palette, tight rings, low fibre weight
+- **oak** — golden-tan palette, wider rings, more visible fibre
+
+**Molding profile** — simulated with a 1-D brightness curve applied across
+each rail's cross-section: sharp outer highlight → broad bevel gradient →
+shadow trough → thin inner bead. The profile is mirrored for the bottom and
+right rails so the bright edge always faces outward.
+
+**Mat shadow** — a Gaussian-blurred dark halo at the artwork boundary,
+clipped to the mat area, simulates the artwork sitting in a shallow rebate.
+
+**Info card** — Georgia serif, warm cream background, positioned on the
+lower-right mat below the artwork.
+
+---
+
+## Data source
+
+Artwork sourced from the
+[Art Institute of Chicago](https://www.artic.edu/) via their
+[open-access API](https://api.artic.edu/docs) and
+[IIIF image service](https://iiif.io/).  All works are in the public domain.
+Metadata and images are provided under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
