@@ -40,14 +40,23 @@ Python 3.11+ is required (type-annotation syntax).
 
 ### 1 — Fetch artwork
 
-Downloads 40 public-domain impressionist and post-impressionist works from the
+Downloads public-domain impressionist and post-impressionist works from the
 [Art Institute of Chicago open-access API](https://api.artic.edu/docs).
 
 ```bash
 python3 fetch_artic.py
 ```
 
-Images land in `/Users/paulf/arty/artic/` mirrored by artist name.
+The script has no CLI arguments. Edit the constants at the top of the file to
+change behaviour:
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `OUTPUT_DIR` | `/Users/paulf/arty/artic` | Download destination |
+| `TARGET_COUNT` | `40` | Number of works to fetch |
+| `REQUEST_DELAY` | `1.0` | Seconds between HTTP requests |
+
+Images and metadata land under `OUTPUT_DIR` mirrored by artist name.
 Re-runs are idempotent — existing files are skipped.
 
 ### 2 — Generate framed presentations
@@ -100,11 +109,12 @@ Saves four 400×400 PNG samples (walnut/oak × horizontal/vertical grain) to
 
 **Wood texture** — `wood_texture.py`
 
-Grain is synthesised from fractional Brownian motion (four octaves of
-bilinearly-interpolated value noise). A large-scale warp layer bends the
-annual-ring bands; a fine-scale layer adds fibre streaks. Ring bands run
-perpendicular to the grain direction so horizontal rails show horizontal
-banding and vertical rails show vertical banding. Two styles are supported:
+Grain is synthesised from two layered fractional Brownian motion passes, each
+built from bilinearly-interpolated value noise: a 5-octave large-scale warp
+that bends the annual-ring bands, and a 3-octave fine-grain layer that adds
+fibre streaks. Ring bands run perpendicular to the grain direction so
+horizontal rails show horizontal banding and vertical rails show vertical
+banding. Two styles are supported:
 
 - **walnut** — dark heartwood palette, tight rings, low fibre weight
 - **oak** — golden-tan palette, wider rings, more visible fibre
