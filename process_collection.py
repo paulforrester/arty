@@ -3,34 +3,31 @@
 process_collection.py
 
 Walk an artic download tree, composite each artwork via frame_compositor,
-and save 3840×2160 JPEG results.
+and save 3840×2160 JPEG results using all available CPU cores.
 
 Usage
 -----
-    # Full collection
-    python3 process_collection.py [--input DIR] [--output DIR] [--style STYLE]
-                                  [--force]
+    python3 process_collection.py [--input DIR] [--output DIR]
+                                  [--override-frame STYLE] [--override-mat CONFIG]
+                                  [--no-mat] [--workers N] [--force]
 
-    # Single file (useful for testing)
-    python3 process_collection.py --file PATH [--output DIR] [--style STYLE]
-                                  [--force]
-
-Input layout:   {input}/{artist}/image/{stem}.jpg
-                {input}/{artist}/meta/{stem}.json   (optional)
-Output:         {output}/{artist}/{stem}.jpg
+    python3 process_collection.py --file PATH [--output DIR] [--force]
 
 Defaults
 --------
-    --input   /Users/paulf/arty/artic
-    --output  /Users/paulf/arty/processed
-    --style   walnut
+    --input    /Users/paulf/arty/artic
+    --output   /Users/paulf/arty/processed
+    --workers  os.cpu_count() - 1
 """
 
 import argparse
+import gc
 import hashlib
 import json
-import logging
+import os
 import sys
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from PIL import Image
@@ -40,13 +37,25 @@ import painting_analysis
 import style_selector
 import styles
 
-log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _seed(stem: str) -> int:
     """Deterministic 31-bit seed from filename stem."""
     return int(hashlib.md5(stem.encode()).hexdigest()[:8], 16) & 0x7FFFFFFF
 
+
+def _fmt_time(seconds: float) -> str:
+    """Format a duration as Xm00s."""
+    m, s = divmod(int(seconds), 60)
+    return f"{m}m{s:02d}s"
+
+
+# ---------------------------------------------------------------------------
+# Worker (module-level so ProcessPoolExecutor can pickle it)
+# ---------------------------------------------------------------------------
 
 def process_one(
     img_path:       Path,
@@ -55,54 +64,94 @@ def process_one(
     override_frame: str | None = None,
     override_mat:   str | None = None,
     no_mat:         bool = False,
-) -> bool:
+) -> dict:
+    """
+    Process a single artwork end-to-end: analyse → select style →
+    composite → save.  Never raises; all errors are captured in the
+    returned dict so the pool can deliver them safely to the main process.
+
+    Returns
+    -------
+    dict with keys:
+        success          bool
+        img_path         str
+        label            str   "artist/filename.jpg" for display
+        frame_style      str
+        mat_config       str
+        use_mat          bool
+        elapsed_seconds  float
+        error            str | None
+    """
+    t0 = time.perf_counter()
+
+    p = Path(img_path)
+    result: dict = {
+        "success":         False,
+        "img_path":        str(img_path),
+        "label":           f"{p.parent.parent.name}/{p.name}",
+        "frame_style":     "",
+        "mat_config":      "",
+        "use_mat":         True,
+        "elapsed_seconds": 0.0,
+        "error":           None,
+    }
+
     try:
         artwork = Image.open(img_path)
-    except Exception as exc:
-        log.error("Cannot open %s: %s", img_path, exc)
-        return False
 
-    meta = {}
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            log.warning("Cannot read metadata %s: %s", meta_path, exc)
+        meta: dict = {}
+        if Path(meta_path).exists():
+            try:
+                meta = json.loads(Path(meta_path).read_text(encoding="utf-8"))
+            except Exception as exc:
+                # Non-fatal — continue with empty meta; note it in error field.
+                result["error"] = f"metadata read failed: {exc}"
 
-    try:
         analysis = painting_analysis.analyse(artwork)
         chosen   = style_selector.select(analysis, meta)
-    except Exception as exc:
-        log.error("Style selection failed for %s: %s", img_path.name, exc)
-        return False
 
-    frame_style      = override_frame or chosen["frame_style"]
-    mat_config       = override_mat   or chosen["mat_config"]
-    mat_accent_color = chosen["mat_accent_color"]
-    use_mat          = False if no_mat else chosen.get("mat", True)
+        frame_style      = override_frame or chosen["frame_style"]
+        mat_config       = override_mat   or chosen["mat_config"]
+        mat_accent_color = chosen["mat_accent_color"]
+        use_mat          = False if no_mat else chosen.get("mat", True)
 
-    log.info("      style  frame=%-14s  mat=%-20s  use_mat=%s",
-             frame_style, mat_config, use_mat)
+        result["frame_style"] = frame_style
+        result["mat_config"]  = mat_config
+        result["use_mat"]     = use_mat
 
-    try:
-        result = frame_compositor.compose(
+        composed = frame_compositor.compose(
             artwork, meta,
             frame_style=frame_style,
             mat_config=mat_config,
             mat_accent_color=mat_accent_color,
-            seed=_seed(img_path.stem),
+            seed=_seed(p.stem),
             mat=use_mat,
         )
+
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        composed.save(str(out_path), "JPEG", quality=95, subsampling=0)
+        result["success"] = True
+
+        # Release large objects before the process returns to the pool so
+        # peak RSS stays reasonable when many workers run concurrently.
+        del composed, artwork, analysis
+        gc.collect()
+
     except Exception as exc:
-        log.error("Compositor failed for %s: %s", img_path.name, exc)
-        return False
+        result["error"] = str(exc)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    result.save(str(out_path), "JPEG", quality=95, subsampling=0)
-    return True
+    result["elapsed_seconds"] = time.perf_counter() - t0
+    return result
 
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def main() -> None:
+    cpu_count       = os.cpu_count() or 1
+    default_workers = max(1, cpu_count - 1)
+
     parser = argparse.ArgumentParser(
         description="Composite artic artwork into museum-framed 4K wallpapers.",
     )
@@ -136,6 +185,13 @@ def main() -> None:
         help="Omit the mat; artwork sits directly against the frame rail",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=default_workers,
+        metavar="N",
+        help=f"Parallel worker processes (default: {default_workers}, max: {cpu_count})",
+    )
+    parser.add_argument(
         "--force", "-f",
         action="store_true",
         help="Re-process images that already have output files",
@@ -147,62 +203,133 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    n_workers = max(1, min(args.workers, cpu_count))
+    out_dir   = Path(args.output)
 
-    out_dir = Path(args.output)
+    # ── Discover images ──────────────────────────────────────────────────────
 
     if args.file:
-        images = [Path(args.file)]
-        if not images[0].exists():
-            log.error("File not found: %s", args.file)
+        img_file = Path(args.file)
+        if not img_file.exists():
+            print(f"Error: file not found: {args.file}", file=sys.stderr)
             sys.exit(1)
+        all_images = [img_file]
     else:
         in_dir = Path(args.input)
-        images = sorted(in_dir.glob("*/image/*.jpg"))
-        if not images:
-            log.error("No images found under %s", in_dir)
+        all_images = sorted(in_dir.glob("*/image/*.jpg"))
+        if not all_images:
+            print(f"Error: no images found under {in_dir}", file=sys.stderr)
             sys.exit(1)
 
-    log.info("Found %d image(s).  Output: %s", len(images), out_dir)
-    if args.override_frame or args.override_mat:
-        log.info("Overrides — frame: %s  mat: %s",
-                 args.override_frame or "auto", args.override_mat or "auto")
+    # ── Build job list ────────────────────────────────────────────────────────
 
-    ok = skipped = failed = 0
+    jobs:    list[tuple] = []
+    skipped: int         = 0
 
-    for i, img_path in enumerate(images, 1):
+    for img_path in all_images:
         artist_dir = img_path.parent.parent
         stem       = img_path.stem
         meta_path  = artist_dir / "meta" / f"{stem}.json"
         out_path   = out_dir / artist_dir.name / f"{stem}.jpg"
 
         if out_path.exists() and not args.force:
-            log.info("[%d/%d] skip  %s/%s", i, len(images),
-                     artist_dir.name, img_path.name)
             skipped += 1
             continue
 
-        log.info("[%d/%d] %s/%s", i, len(images),
-                 artist_dir.name, img_path.name)
+        jobs.append((img_path, meta_path, out_path,
+                     args.override_frame, args.override_mat, args.no_mat))
 
-        if process_one(img_path, meta_path, out_path,
-                       override_frame=args.override_frame,
-                       override_mat=args.override_mat,
-                       no_mat=args.no_mat):
-            log.info("      → %s", out_path)
-            ok += 1
-        else:
-            failed += 1
+    total = len(jobs)
 
-    log.info(
-        "Done — %d processed, %d skipped, %d failed. Output: %s",
-        ok, skipped, failed, out_dir,
-    )
+    print(f"Images: {len(all_images)} found, {skipped} skipped (already processed), "
+          f"{total} to process")
+    print(f"Workers: {n_workers} of {cpu_count} cores")
+
+    if n_workers > 8:
+        print(f"Note: {n_workers} workers may require ~{n_workers * 250} MB RAM. "
+              "Monitor memory usage.")
+
+    if args.override_frame or args.override_mat:
+        print(f"Overrides — frame: {args.override_frame or 'auto'}  "
+              f"mat: {args.override_mat or 'auto'}")
+
+    if total == 0:
+        print(f"\nCompleted: 0  Skipped: {skipped}  Failed: 0  "
+              f"Total time: 0m00s")
+        return
+
+    # ── Process ───────────────────────────────────────────────────────────────
+
+    ok            = 0
+    failed        = 0
+    failed_list:  list[dict] = []
+    start_time    = time.perf_counter()
+
+    print()  # blank line before the rolling output
+
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        future_to_job = {
+            executor.submit(process_one, *job): job
+            for job in jobs
+        }
+
+        completed = 0
+        for future in as_completed(future_to_job):
+            try:
+                result = future.result()
+            except Exception as exc:
+                # Should not happen — process_one catches internally — but
+                # handle defensively so the pool never crashes the main process.
+                job = future_to_job[future]
+                result = {
+                    "success":         False,
+                    "img_path":        str(job[0]),
+                    "label":           f"{Path(job[0]).parent.parent.name}/{Path(job[0]).name}",
+                    "frame_style":     "",
+                    "mat_config":      "",
+                    "elapsed_seconds": 0.0,
+                    "error":           str(exc),
+                }
+
+            completed += 1
+            elapsed   = time.perf_counter() - start_time
+
+            if result["success"]:
+                ok += 1
+                print(f"[{completed}/{total}] {result['label']}"
+                      f" → frame:{result['frame_style']} mat:{result['mat_config']}"
+                      f" ({result['elapsed_seconds']:.1f}s)")
+            else:
+                failed += 1
+                failed_list.append(result)
+                print(f"[{completed}/{total}] FAILED {result['label']}: "
+                      f"{result['error']}")
+
+            pct = completed / total * 100
+            eta = (elapsed / completed) * (total - completed) if completed < total else 0.0
+            print(
+                f"Progress: {completed}/{total} ({pct:.0f}%) | "
+                f"Elapsed: {_fmt_time(elapsed)} | "
+                f"ETA: {_fmt_time(eta)}          ",
+                end="\r", flush=True,
+            )
+
+    print()  # newline past the final progress line
+
+    total_elapsed = time.perf_counter() - start_time
+    avg           = total_elapsed / ok if ok else 0.0
+
+    print(f"\nCompleted: {ok}  Skipped: {skipped}  Failed: {failed}  "
+          f"Total time: {_fmt_time(total_elapsed)}")
+    print(f"Average: {avg:.1f}s/image  Cores used: {n_workers}")
+
+    if failed_list:
+        print("\nFailed images:")
+        for r in failed_list:
+            print(f"  {r['img_path']}: {r['error']}")
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.set_start_method("spawn", force=True)
     main()
