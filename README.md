@@ -45,21 +45,37 @@ Python 3.11+ is required (type-annotation syntax).
 
 ### 1 — Fetch artwork
 
-Downloads public-domain impressionist and post-impressionist works from the
+Downloads public-domain works from the
 [Art Institute of Chicago open-access API](https://api.artic.edu/docs).
+
+**Style mode** (default) — fetches Impressionist and Post-Impressionist works:
 
 ```bash
 python3 fetch_artic.py
 ```
 
-The script has no CLI arguments. Edit the constants at the top of the file to
-change behaviour:
+Edit the constants at the top of the file to change behaviour:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
 | `OUTPUT_DIR` | `/Users/paulf/arty/artic` | Download destination |
 | `TARGET_COUNT` | `40` | Number of works to fetch |
 | `REQUEST_DELAY` | `1.0` | Seconds between HTTP requests |
+
+**Artist mode** — fetch works by specific artists:
+
+```bash
+python3 fetch_artic.py --artist 'Claude Monet' --limit 30
+python3 fetch_artic.py --artists-file impressionists.txt --limit 20
+python3 fetch_artic.py --artist 'Georges Seurat' --style 'Post-Impressionism'
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--artist NAME` | — | Fetch works by a single named artist |
+| `--artists-file PATH` | — | Fetch works for each artist in a text file (one per line; `#` comments ok) |
+| `--limit N` | `25` | Max works to fetch per artist |
+| `--style STYLE` | — | Additional style filter (artist mode only) |
 
 Images and metadata land under `OUTPUT_DIR` mirrored by artist name.
 Re-runs are idempotent — existing files are skipped.
@@ -78,6 +94,7 @@ python3 process_collection.py [--input DIR] [--output DIR] \
 | `--override-frame`   | auto | Force a specific frame style (key from `styles.FRAME_STYLES`) |
 | `--override-mat`     | auto | Force a specific mat config (key from `styles.MAT_CONFIGS`) |
 | `--no-mat`           | off  | Omit the mat; artwork sits directly against the frame |
+| `--workers N`        | `cpu_count - 1` | Number of parallel worker processes |
 | `--force`  / `-f`    | off  | Re-process existing outputs |
 
 Each image is analysed for colour temperature, brightness, and contrast;
@@ -155,11 +172,11 @@ Saves four 400×400 PNG samples (walnut/oak × horizontal/vertical grain) to
 │  │  │  │             artwork                   │  │  │  │
 │  │  │  │                                       │  │  │  │
 │  │  │  └───────────────────────────────────────┘  │  │  │
-│  │  │                          ┌────────────────┐  │  │  │
-│  │  │                          │ Title          │  │  │  │
-│  │  │                          │ Artist · Date  │  │  │  │
-│  │  │                          └────────────────┘  │  │  │
 │  │  └─────────────────────────────────────────────┘  │  │
+│  │          ┌───────────────────────┐                 │  │
+│  │          │  Title                │ ← brass plaque  │  │
+│  │          │  Artist · Date        │                 │  │
+│  │          └───────────────────────┘                 │  │
 │  └───────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -183,8 +200,11 @@ right rails so the bright edge always faces outward.
 **Mat shadow** — a Gaussian-blurred dark halo at the artwork boundary,
 clipped to the mat area, simulates the artwork sitting in a shallow rebate.
 
-**Info card** — Georgia serif, warm cream background, positioned on the
-lower-right mat below the artwork.
+**Brass plaque** — Georgia serif, antique brass background `(180,145,60)` with
+subtle brushed-metal noise, 1 px dark brass border `(140,108,30)`. Centered on
+the bottom frame rail, 10 px below the inner edge, visible in both mat and
+no-mat modes. Title wraps to multiple lines; font sizes step down if needed to
+fit within the frame width.
 
 ---
 

@@ -12,10 +12,13 @@ Always use `python3`. The system `python` is Python 2.7 and will fail on type
 annotations.
 
 ```bash
-python3 fetch_artic.py                                           # download
+python3 fetch_artic.py                                           # style mode (40 works)
+python3 fetch_artic.py --artist 'Claude Monet' --limit 30       # artist mode
+python3 fetch_artic.py --artists-file artists.txt --limit 20    # multi-artist
+
 python3 process_collection.py [--input DIR] [--output DIR] \
         [--override-frame STYLE] [--override-mat CONFIG] \
-        [--no-mat] [--force]                                     # process
+        [--no-mat] [--workers N] [--force]                       # process (parallel)
 python3 wood_texture.py [outdir]   # save 4 PNG samples for visual inspection
 ```
 
@@ -54,7 +57,9 @@ Data lives **outside the repo** at `/Users/paulf/arty/`:
 
 ## Key constants
 
-**fetch_artic.py** — no CLI args, edit these directly:
+**fetch_artic.py** — two modes:
+
+*Style mode* (default, no `--artist` arg) — edit these constants directly:
 ```python
 OUTPUT_DIR    = Path("/Users/paulf/arty/artic")
 TARGET_COUNT  = 40          # how many works to download
@@ -62,6 +67,18 @@ REQUEST_DELAY = 1.0         # polite delay between HTTP requests (seconds)
 ```
 The styles queried are hardcoded in `collect_artworks()`:
 `["Impressionism", "Post-Impressionism"]`
+
+*Artist mode* (`--artist NAME` or `--artists-file PATH`) — CLI flags:
+```
+--artist NAME        fetch works by a single named artist
+--artists-file PATH  fetch works for each artist listed in a text file (one per line, # comments ok)
+--limit N            max works to fetch per artist (default: 25)
+--style STYLE        additional style filter, e.g. 'Impressionism' (artist mode only)
+```
+Query strategy: exact match (`term[artist_title.keyword]`) when ≥ 5 results exist, otherwise
+`match_phrase[artist_title]` (phrase order required — avoids OR semantics of bare `match`).
+Python post-filter: `all(w in artist_title for w in query_words)` catches residual noise.
+Prints a summary table (Artist / Downloaded / Skipped) on completion.
 
 **painting_analysis.py** — tuning constants:
 ```python
@@ -97,11 +114,12 @@ C\* > 20 (saturated), cluster size 1–25% (present but not dominant).
 TV_W, TV_H = 3840, 2160
 FRAME_W    = 160        # frame rail width
 MAT_W      = 70         # mat border around artwork
-BORDER_MIN = 80         # minimum black gap outside the frame
 LINER_W    = 18         # inner liner width for double-mat configs
 BG_COLOR   = (17, 17, 17)
 MAT_COLOR  = (240, 234, 220)
 ```
+There is no `BORDER_MIN`; frame outer edges fill the canvas flush on the
+constraining axis (fill-to-edge sizing — see architecture notes below).
 
 Note: `composite.py` uses `MAT_W = 72`; `frame_compositor.py` uses `MAT_W = 70`.
 They are independent implementations.
@@ -128,7 +146,7 @@ They are independent implementations.
 The style is then available via `--override-frame ebony`. To make
 `style_selector` recommend it automatically, add a rule in `select()`.
 
-**Change frame geometry** — edit `FRAME_W`, `MAT_W`, or `BORDER_MIN` in
+**Change frame geometry** — edit `FRAME_W` or `MAT_W` in
 `frame_compositor.py`. Everything else is derived from those values.
 
 **Change which artworks are fetched** — edit the `styles` list in
@@ -137,16 +155,25 @@ The style is then available via `--override-frame ebony`. To make
 
 ## Architecture notes
 
-**Pipeline per image** — `process_collection` runs three stages in sequence:
+**Pipeline per image** — three stages run inside each worker:
 1. `painting_analysis.analyse(artwork)` → perceptual colour dict (`palette_temperature`, `accent_colors`, `brightness`, `contrast`, `edge_brightness`)
 2. `style_selector.select(analysis, meta)` → `{frame_style, mat_config, mat_accent_color, mat}`
 3. `frame_compositor.compose(artwork, meta, frame_style=…, mat_config=…, mat_accent_color=…, mat=…)`
 
 `frame_compositor.py` is the pure image-processing core (PIL Image in, PIL
-Image out; no file I/O, no CLI). `process_collection.py` is the thin CLI
-wrapper that handles discovery, loading, saving, skipping, and logging.
+Image out; no file I/O, no CLI). `process_collection.py` is the CLI wrapper
+that handles discovery, loading, saving, skipping, logging, and parallel dispatch.
 `--override-frame` / `--override-mat` bypass stages 1–2 for that dimension.
 `--no-mat` forces `mat=False` regardless of the auto-detected value.
+
+**Parallel processing** (`process_collection`): images are processed using
+`concurrent.futures.ProcessPoolExecutor` with `--workers N` parallel processes
+(default: `os.cpu_count() - 1`). `process_one()` is the unit of work — it
+returns a result dict and never raises; all exceptions are captured so the pool
+cannot crash the main process. Workers call `gc.collect()` and delete large
+objects (composed image, artwork, analysis) before returning to keep peak RSS
+reasonable. macOS requires `multiprocessing.set_start_method("spawn")` before
+starting the pool.
 
 **Wood texture pipeline** (`wood_texture.generate`):
 Three anisotropic FBM layers are summed, each with features elongated ~10:1 along
@@ -165,13 +192,15 @@ given its own wood texture at the correct grain direction. The molding
 brightness profile is reversed for bottom and right rails so the outer
 (bright) edge always faces away from the artwork.
 
-**Info card** (`frame_compositor._info_card`):
-Rendered as a standalone PIL Image sized to fit its content (max 500 px wide).
-Font: Georgia 30 px (title), 22 px (artist, date).
-- mat mode (`dark_plaque=False`): cream card `(246,240,226)`, warm dark text; placed 8 px
-  from the inner-frame edges in the lower-right corner of the mat.
-- no-mat mode (`dark_plaque=True`): dark plaque `(30,22,12)`, warm light text; placed
-  12 px from the inner frame edge and 16 px from the bottom inner edge on the rail.
+**Info card / brass plaque** (`frame_compositor._info_card`):
+Always rendered as an antique brass plaque, centered on the bottom frame rail,
+10 px below the inner edge of the rail — visible regardless of mat mode.
+- Background: `(180,145,60)` brass + ±6 numpy noise for brushed-metal texture
+- Border: 1 px `(140,108,30)` dark brass outline
+- Text: `(30,18,5)` near-black warm, Georgia font 28 px title / 20 px sub
+- Title wraps to multiple lines (greedy word-wrap); font sizes step down
+  in 2-point increments (min 14/12 px) until all lines fit `max_width - 32 px`
+- `max_width` passed from `compose()` as `fow - 40` (frame outer width minus padding)
 
 **Seeding** — `process_collection._seed(stem)` = `md5(stem)[:8]` as a 31-bit
 int. Same filename always produces the same frame texture across re-runs.
@@ -191,8 +220,8 @@ falls naturally on both mat and liner.
 **No-mat mode** (`compose(mat=False)`): mat is omitted entirely; the artwork
 sits directly against the frame's inner edge. `_rabbet_shadow()` darkens the
 outermost 12 px of the artwork (0.55× at the edge, linear ramp to 1.0× at
-12 px depth) to simulate the rebate shadow. The info card becomes a dark plaque
-on the lower-right frame rail. `style_selector` sets `mat=False` automatically
+12 px depth) to simulate the rebate shadow. The brass plaque remains on the
+bottom frame rail as in mat mode. `style_selector` sets `mat=False` automatically
 when `edge_brightness < 0.25`; `--no-mat` forces it from the CLI.
 
 ## There is no test suite
