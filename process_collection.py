@@ -36,7 +36,9 @@ from pathlib import Path
 from PIL import Image
 
 import frame_compositor
-import wood_texture
+import painting_analysis
+import style_selector
+import styles
 
 log = logging.getLogger(__name__)
 
@@ -47,10 +49,11 @@ def _seed(stem: str) -> int:
 
 
 def process_one(
-    img_path:   Path,
-    meta_path:  Path,
-    out_path:   Path,
-    wood_style: str,
+    img_path:       Path,
+    meta_path:      Path,
+    out_path:       Path,
+    override_frame: str | None = None,
+    override_mat:   str | None = None,
 ) -> bool:
     try:
         artwork = Image.open(img_path)
@@ -66,9 +69,24 @@ def process_one(
             log.warning("Cannot read metadata %s: %s", meta_path, exc)
 
     try:
+        analysis = painting_analysis.analyse(artwork)
+        chosen   = style_selector.select(analysis, meta)
+    except Exception as exc:
+        log.error("Style selection failed for %s: %s", img_path.name, exc)
+        return False
+
+    frame_style      = override_frame or chosen["frame_style"]
+    mat_config       = override_mat   or chosen["mat_config"]
+    mat_accent_color = chosen["mat_accent_color"]
+
+    log.info("      style  frame=%-14s  mat=%s", frame_style, mat_config)
+
+    try:
         result = frame_compositor.compose(
             artwork, meta,
-            wood_style=wood_style,
+            frame_style=frame_style,
+            mat_config=mat_config,
+            mat_accent_color=mat_accent_color,
             seed=_seed(img_path.stem),
         )
     except Exception as exc:
@@ -97,10 +115,16 @@ def main() -> None:
         help="Output directory (default: /Users/paulf/arty/processed)",
     )
     parser.add_argument(
-        "--style", "-s",
-        default="walnut",
-        choices=list(wood_texture.STYLES),
-        help="Wood frame style (default: walnut)",
+        "--override-frame",
+        metavar="STYLE",
+        choices=list(styles.FRAME_STYLES),
+        help="Force a specific frame style instead of the auto-selected one",
+    )
+    parser.add_argument(
+        "--override-mat",
+        metavar="CONFIG",
+        choices=list(styles.MAT_CONFIGS),
+        help="Force a specific mat config instead of the auto-selected one",
     )
     parser.add_argument(
         "--force", "-f",
@@ -134,8 +158,10 @@ def main() -> None:
             log.error("No images found under %s", in_dir)
             sys.exit(1)
 
-    log.info("Found %d image(s). Style: %s  Output: %s",
-             len(images), args.style, out_dir)
+    log.info("Found %d image(s).  Output: %s", len(images), out_dir)
+    if args.override_frame or args.override_mat:
+        log.info("Overrides — frame: %s  mat: %s",
+                 args.override_frame or "auto", args.override_mat or "auto")
 
     ok = skipped = failed = 0
 
@@ -154,7 +180,9 @@ def main() -> None:
         log.info("[%d/%d] %s/%s", i, len(images),
                  artist_dir.name, img_path.name)
 
-        if process_one(img_path, meta_path, out_path, args.style):
+        if process_one(img_path, meta_path, out_path,
+                       override_frame=args.override_frame,
+                       override_mat=args.override_mat):
             log.info("      → %s", out_path)
             ok += 1
         else:

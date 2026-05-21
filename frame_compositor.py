@@ -8,7 +8,8 @@ wood-grain frame with bevel shading, on a near-black background.
 
 Public API
 ----------
-    compose(artwork, meta, *, wood_style="walnut", seed=42) -> Image.Image
+    compose(artwork, meta, *, frame_style="walnut", mat_config="single_neutral",
+            mat_accent_color=None, seed=42) -> Image.Image
 
 meta keys used: title, artist, date  (all optional)
 """
@@ -21,6 +22,7 @@ import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 import wood_texture
+import styles
 
 # ---------------------------------------------------------------------------
 # Layout constants (pixels at 4K)
@@ -30,6 +32,7 @@ TV_W, TV_H = 3840, 2160
 FRAME_W    = 100          # frame rail width
 MAT_W      = 70           # mat border around artwork
 BORDER_MIN = 80           # minimum black gap outside the frame
+LINER_W    = 18           # inner liner width for double-mat configs
 
 BG_COLOR  = (17, 17, 17)      # near-black canvas
 MAT_COLOR = (240, 234, 220)   # warm off-white mat
@@ -243,22 +246,26 @@ def compose(
     artwork: Image.Image,
     meta: dict,
     *,
-    wood_style: str = "walnut",
+    frame_style: str = "walnut",
+    mat_config: str = "single_neutral",
+    mat_accent_color: tuple[int, int, int] | None = None,
     seed: int = 42,
 ) -> Image.Image:
     """
     Return a 3840×2160 PIL Image: *artwork* centered on a near-black
-    background, surrounded by a warm off-white mat (~70 px) and a
-    wood-grain frame (~100 px) with bevel shading.  A small cream info
-    card showing title, artist, and date is placed in the lower-right
-    corner of the mat.
+    background, surrounded by a mat and a wood-grain frame with bevel
+    shading.  A small cream info card is placed in the lower-right corner.
 
     Parameters
     ----------
-    artwork    : source image in any mode; converted to RGB internally
-    meta       : dict with optional keys title, artist, date
-    wood_style : 'walnut' (default) or 'oak' — any key in wood_texture.STYLES
-    seed       : RNG seed; same seed always produces the same frame texture
+    artwork          : source image in any mode; converted to RGB internally
+    meta             : dict with optional keys title, artist, date
+    frame_style      : key from styles.FRAME_STYLES (default 'walnut');
+                       falls back to 'walnut' for styles not yet in wood_texture
+    mat_config       : key from styles.MAT_CONFIGS (default 'single_neutral')
+    mat_accent_color : pre-processed RGB tuple used as the inner liner on
+                       double-accent mats; ignored for single-mat configs
+    seed             : RNG seed; same seed always produces the same frame texture
     """
     art = artwork.convert("RGB")
 
@@ -282,11 +289,29 @@ def compose(
     ax = mx + MAT_W                # artwork origin
     ay = my + MAT_W
 
+    # Resolve wood style — fall back to walnut for styles not yet rendered
+    _wood = styles.FRAME_STYLES.get(frame_style, styles.FRAME_STYLES["walnut"])["wood_style"]
+    if _wood not in wood_texture.STYLES:
+        _wood = "walnut"
+
     canvas = Image.new("RGB", (TV_W, TV_H), BG_COLOR)
 
-    _draw_frame(canvas, fx, fy, fow, foh, wood_style, seed)
+    _draw_frame(canvas, fx, fy, fow, foh, _wood, seed)
 
-    mat_img    = Image.new("RGB", (mat_w, mat_h), MAT_COLOR)
+    # Determine inner liner colour for double-mat configs
+    _mat_cfg = styles.MAT_CONFIGS.get(mat_config, styles.MAT_CONFIGS["single_neutral"])
+    if _mat_cfg["layers"] == 2:
+        _liner = mat_accent_color if _mat_cfg["uses_accent"] else _mat_cfg.get("secondary_color")
+    else:
+        _liner = None
+
+    mat_img = Image.new("RGB", (mat_w, mat_h), MAT_COLOR)
+    if _liner is not None:
+        ImageDraw.Draw(mat_img).rectangle(
+            [MAT_W - LINER_W, MAT_W - LINER_W,
+             MAT_W + art_w + LINER_W - 1, MAT_W + art_h + LINER_W - 1],
+            fill=_liner,
+        )
     art_on_mat = (MAT_W, MAT_W, MAT_W + art_w, MAT_W + art_h)
     mat_img    = _mat_shadow(mat_img, art_on_mat)
     canvas.paste(mat_img, (mx, my))
