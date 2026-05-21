@@ -19,7 +19,7 @@ arty/
 ├── painting_analysis.py    # Perceptual colour analysis (temperature, accent colours, brightness, contrast)
 └── composite.py            # Legacy standalone processor (superseded by the two above)
 
-/Users/paulf/arty/
+~/arty/
 ├── artic/              # Raw downloads
 │   └── {artist}/
 │       ├── image/      # Full-size JPEGs from IIIF
@@ -58,7 +58,7 @@ Edit the constants at the top of the file to change behaviour:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `OUTPUT_DIR` | `/Users/paulf/arty/artic` | Download destination |
+| `OUTPUT_DIR` | `~/arty/artic` | Download destination |
 | `TARGET_COUNT` | `40` | Number of works to fetch |
 | `REQUEST_DELAY` | `1.0` | Seconds between HTTP requests |
 
@@ -89,8 +89,8 @@ python3 process_collection.py [--input DIR] [--output DIR] \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--input`  / `-i`    | `/Users/paulf/arty/artic`     | Root of downloaded artwork |
-| `--output` / `-o`    | `/Users/paulf/arty/processed` | Output directory |
+| `--input`  / `-i`    | `~/arty/artic`     | Root of downloaded artwork |
+| `--output` / `-o`    | `~/arty/processed` | Output directory |
 | `--override-frame`   | auto | Force a specific frame style (key from `styles.FRAME_STYLES`) |
 | `--override-mat`     | auto | Force a specific mat config (key from `styles.MAT_CONFIGS`) |
 | `--no-mat`           | off  | Omit the mat; artwork sits directly against the frame |

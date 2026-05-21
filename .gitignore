@@ -24,7 +24,7 @@ env/
 *.swp
 *.swo
 
-# Output data (lives outside the repo at /Users/paulf/arty/)
+# Output data (lives outside the repo at ~/arty/)
 *.jpg
 *.jpeg
 *.png

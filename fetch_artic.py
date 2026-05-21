@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-OUTPUT_DIR    = Path("/Users/paulf/arty/artic")
+OUTPUT_DIR    = Path.home() / "arty" / "artic"
 IIIF_BASE     = "https://www.artic.edu/iiif/2"
 API_BASE      = "https://api.artic.edu/api/v1"
 REQUEST_DELAY = 1.0   # seconds between HTTP requests

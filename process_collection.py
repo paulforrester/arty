@@ -15,8 +15,8 @@ Usage
 
 Defaults
 --------
-    --input    /Users/paulf/arty/artic
-    --output   /Users/paulf/arty/processed
+    --input    ~/arty/artic
+    --output   ~/arty/processed
     --workers  os.cpu_count() - 1
 """
 
@@ -157,15 +157,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--input", "-i",
-        default="/Users/paulf/arty/artic",
+        default=str(Path.home() / "arty" / "artic"),
         metavar="DIR",
-        help="Root of downloaded artwork tree (default: /Users/paulf/arty/artic)",
+        help="Root of downloaded artwork tree (default: ~/arty/artic)",
     )
     parser.add_argument(
         "--output", "-o",
-        default="/Users/paulf/arty/processed",
+        default=str(Path.home() / "arty" / "processed"),
         metavar="DIR",
-        help="Output directory (default: /Users/paulf/arty/processed)",
+        help="Output directory (default: ~/arty/processed)",
     )
     parser.add_argument(
         "--override-frame",

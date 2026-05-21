@@ -306,10 +306,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Composite artwork into museum-framed 4K wallpapers."
     )
-    parser.add_argument("--input",  "-i", default="/Users/paulf/arty/artic",
-                        help="Input directory tree (default: /Users/paulf/arty/artic)")
-    parser.add_argument("--output", "-o", default="/Users/paulf/arty/processed",
-                        help="Output directory (default: /Users/paulf/arty/processed)")
+    parser.add_argument("--input",  "-i", default=str(Path.home() / "arty" / "artic"),
+                        help="Input directory tree (default: ~/arty/artic)")
+    parser.add_argument("--output", "-o", default=str(Path.home() / "arty" / "processed"),
+                        help="Output directory (default: ~/arty/processed)")
     parser.add_argument("--style",  "-s", default="walnut",
                         choices=list(wood_texture.STYLES),
                         help="Wood frame style (default: walnut)")

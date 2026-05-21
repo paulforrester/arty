@@ -43,10 +43,10 @@ painting_analysis.py    Perceptual colour analysis — PIL Image in, dict out
 composite.py            Legacy standalone processor (superseded; kept for reference)
 ```
 
-Data lives **outside the repo** at `/Users/paulf/arty/`:
+Data lives **outside the repo** at `~/arty/`:
 
 ```
-/Users/paulf/arty/
+~/arty/
 ├── artic/          fetch_artic.py writes here
 │   └── {artist}/
 │       ├── image/{stem}.jpg
@@ -61,7 +61,7 @@ Data lives **outside the repo** at `/Users/paulf/arty/`:
 
 *Style mode* (default, no `--artist` arg) — edit these constants directly:
 ```python
-OUTPUT_DIR    = Path("/Users/paulf/arty/artic")
+OUTPUT_DIR    = Path("~/arty/artic")
 TARGET_COUNT  = 40          # how many works to download
 REQUEST_DELAY = 1.0         # polite delay between HTTP requests (seconds)
 ```
@@ -233,7 +233,7 @@ changes before running the full batch:
 ```python
 from PIL import Image
 import json, frame_compositor
-img  = Image.open("/Users/paulf/arty/artic/claude_monet/image/water_lilies_16568.jpg")
-meta = json.loads(open("/Users/paulf/arty/artic/claude_monet/meta/water_lilies_16568.json").read())
+img  = Image.open("~/arty/artic/claude_monet/image/water_lilies_16568.jpg")
+meta = json.loads(open("~/arty/artic/claude_monet/meta/water_lilies_16568.json").read())
 frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 ```
