@@ -349,58 +349,96 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
         return ImageFont.load_default()
 
 
-def _info_card(meta: dict, *, dark_plaque: bool = False) -> Image.Image:
-    """
-    Render a small info card showing title, artist, and date.
+def _wrap_text(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_px: int,
+    draw: ImageDraw.ImageDraw,
+) -> list[str]:
+    """Greedy word-wrap *text* to fit within *max_px* pixels wide."""
+    words   = text.split()
+    lines:  list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if int(draw.textlength(candidate, font=font)) <= max_px:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
 
-    dark_plaque=False  cream card for mat mode  (default)
-    dark_plaque=True   dark plaque for no-mat mode (card sits on frame rail)
+
+def _info_card(meta: dict, max_width: int) -> Image.Image:
+    """
+    Render a brass museum plaque showing title, artist, and date.
+
+    The plaque expands to fit content up to *max_width* pixels wide.
+    If font sizes would still overflow, they are reduced in 2-point steps
+    until everything fits.  Title text wraps rather than truncating.
     """
     raw_title  = meta.get("title")  or "Untitled"
     raw_artist = meta.get("artist") or ""
     raw_date   = meta.get("date")   or ""
 
     artist = raw_artist.split("\n")[0].strip()
-    title  = raw_title[:46] + ("…" if len(raw_title) > 46 else "")
 
-    f_title = _font(30)
-    f_sub   = _font(22)
-    pad     = 14
-    gap     = 6
+    pad_x, pad_y = 16, 10
+    gap          = 8
+    title_size   = 28
+    sub_size     = 20
 
-    lines = [(title, f_title)]
+    # Shrink fonts until every line fits within the available content width.
+    content_w = max_width - pad_x * 2
+    while title_size >= 14:
+        f_title = _font(title_size)
+        f_sub   = _font(sub_size)
+        probe   = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+        title_lines = _wrap_text(raw_title, f_title, content_w, probe)
+        all_lines   = [(t, f_title) for t in title_lines]
+        if artist:
+            all_lines.append((artist, f_sub))
+        if raw_date:
+            all_lines.append((raw_date, f_sub))
+
+        if max(int(probe.textlength(t, font=f)) for t, f in all_lines) <= content_w:
+            break
+        title_size -= 2
+        sub_size    = max(12, sub_size - 2)
+
+    # Final measurement
+    probe       = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    title_lines = _wrap_text(raw_title, f_title, content_w, probe)
+    all_lines   = [(t, f_title) for t in title_lines]
     if artist:
-        lines.append((artist, f_sub))
+        all_lines.append((artist, f_sub))
     if raw_date:
-        lines.append((raw_date, f_sub))
+        all_lines.append((raw_date, f_sub))
 
-    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    widths  = [int(probe.textlength(t, font=f)) for t, f in lines]
-    heights = [f.getbbox("Ag")[3] - f.getbbox("Ag")[1] for _, f in lines]
+    widths  = [int(probe.textlength(t, font=f)) for t, f in all_lines]
+    heights = [f.getbbox("Ag")[3] - f.getbbox("Ag")[1] for _, f in all_lines]
 
-    card_w = min(500, max(widths) + pad * 2)
-    card_h = pad * 2 + sum(heights) + gap * (len(lines) - 1)
+    card_w = max(widths) + pad_x * 2
+    card_h = pad_y * 2 + sum(heights) + gap * (len(all_lines) - 1)
 
-    if dark_plaque:
-        bg_color     = (30,  22,  12)
-        title_color  = (220, 205, 175)
-        sub_color    = (170, 148, 112)
-        border_color = (55,  40,  22)
-    else:
-        bg_color     = (246, 240, 226)
-        title_color  = (28,  18,  10)
-        sub_color    = (70,  55,  38)
-        border_color = (168, 152, 132)
+    # Antique brass background with subtle brushed-metal noise
+    card  = Image.new("RGB", (card_w, card_h), (180, 145, 60))
+    noise = np.random.default_rng(42).integers(-6, 7, (card_h, card_w, 3), dtype=np.int16)
+    card  = Image.fromarray(
+        np.clip(np.array(card, dtype=np.int16) + noise, 0, 255).astype(np.uint8)
+    )
 
-    card = Image.new("RGB", (card_w, card_h), bg_color)
     draw = ImageDraw.Draw(card)
-    draw.rectangle([0, 0, card_w - 1, card_h - 1], outline=border_color, width=1)
+    draw.rectangle([0, 0, card_w - 1, card_h - 1], outline=(140, 108, 30), width=1)
 
-    y = pad
-    for i, (text, font) in enumerate(lines):
-        draw.text((pad, y), text, font=font,
-                  fill=title_color if i == 0 else sub_color)
-        y += heights[i] + gap
+    y = pad_y
+    for text, font in all_lines:
+        draw.text((pad_x, y), text, font=font, fill=(30, 18, 5))
+        y += font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + gap
 
     return card
 
@@ -434,8 +472,7 @@ def compose(
                        double-accent mats; ignored for single-mat configs
     seed             : RNG seed; same seed always produces the same frame texture
     mat              : when False the mat is omitted and the artwork sits directly
-                       against the frame; a rabbet shadow and dark plaque card
-                       are used instead
+                       against the frame with a rabbet shadow at the edges
     """
     art = artwork.convert("RGB")
 
@@ -497,16 +534,10 @@ def compose(
 
     canvas.paste(art, (ax, ay))
 
-    # Info card
-    card = _info_card(meta, dark_plaque=not mat)
-    if mat:
-        # Lower-right corner of the mat, 8 px from the frame inner edges
-        card_x = mx + mat_w - card.width  - 8
-        card_y = my + mat_h - card.height - 8
-    else:
-        # Lower-right corner of the frame rail, inset from the inner edge
-        card_x = fx + fow - FRAME_W - 12 - card.width
-        card_y = fy + foh - FRAME_W - 16 - card.height
+    # Brass plaque — centered on the bottom rail, 10 px below the inner edge
+    card   = _info_card(meta, max_width=fow - 40)
+    card_x = fx + (fow - card.width) // 2
+    card_y = fy + foh - FRAME_W + 10
     canvas.paste(card, (card_x, card_y))
 
     return canvas
