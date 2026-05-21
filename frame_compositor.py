@@ -59,6 +59,32 @@ def _molding_profile(n: int) -> np.ndarray:
     return outer_hi + bevel + shadow + bead
 
 
+def _gilded_molding_profile(n: int) -> np.ndarray:
+    """
+    1-D brightness offset for gilded frame rails (outer edge = index 0).
+    Flat facets meeting at sharp angles — no smooth curves:
+      • outer catch-light: narrow high-brightness zone
+      • upper bevel face:  flat, moderately lit
+      • shadow cove:       recessed flat zone
+      • inner bead:        thin wire of bright gold at the inner edge
+    """
+    x = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    k = 50.0   # transition sharpness — much steeper than the wood profile
+
+    def up(edge: float) -> np.ndarray:
+        return np.clip((x - edge) * k + 0.5, 0.0, 1.0)
+
+    def dn(edge: float) -> np.ndarray:
+        return 1.0 - up(edge)
+
+    catch_light =  0.52 * dn(0.06)                  # narrow outer highlight
+    upper_face  =  0.18 * (up(0.12) - up(0.40))     # flat lit bevel plane
+    shadow_cove = -0.32 * (up(0.44) - up(0.74))     # recessed dark zone
+    inner_bead  =  0.44 * up(0.92)                  # thin bright inner wire
+
+    return catch_light + upper_face + shadow_cove + inner_bead
+
+
 def _apply_lighting(
     arr: np.ndarray,
     profile: np.ndarray,
@@ -93,10 +119,8 @@ def _draw_frame(
     the corners.  The brightness profile is reversed for the bottom and
     right rails so the outer (bright) edge always faces away from the mat.
     """
-    fw      = FRAME_W
-    profile = _molding_profile(fw)
+    fw = FRAME_W
 
-    # Eight corner points: outer corners + inner corners
     tl  = (fx,            fy)
     tr  = (fx + fow,      fy)
     bl  = (fx,            fy + foh)
@@ -106,13 +130,23 @@ def _draw_frame(
     ibl = (fx + fw,       fy + foh - fw)
     ibr = (fx + fow - fw, fy + foh - fw)
 
-    rails = [
-        #  polygon               grain          profile
-        ([tl,  tr,  itr, itl], "horizontal",  profile),
-        ([ibl, ibr, br,  bl],  "horizontal",  profile[::-1]),
-        ([tl,  itl, ibl, bl],  "vertical",    profile),
-        ([itr, tr,  br,  ibr], "vertical",    profile[::-1]),
-    ]
+    if wood_style == "gilded":
+        # Faceted gilt molding; upper-left light source makes top/left brighter
+        p = _gilded_molding_profile(fw)
+        rails = [
+            ([tl,  tr,  itr, itl], "horizontal", p        + 0.08),  # top  — lit
+            ([ibl, ibr, br,  bl],  "horizontal", p[::-1]  - 0.08),  # bottom — shadow
+            ([tl,  itl, ibl, bl],  "vertical",   p        + 0.05),  # left — lit
+            ([itr, tr,  br,  ibr], "vertical",   p[::-1]  - 0.05),  # right — shadow
+        ]
+    else:
+        p = _molding_profile(fw)
+        rails = [
+            ([tl,  tr,  itr, itl], "horizontal", p),
+            ([ibl, ibr, br,  bl],  "horizontal", p[::-1]),
+            ([tl,  itl, ibl, bl],  "vertical",   p),
+            ([itr, tr,  br,  ibr], "vertical",   p[::-1]),
+        ]
 
     for poly, direction, prof in rails:
         xs  = [p[0] for p in poly]

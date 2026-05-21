@@ -5,7 +5,7 @@ Procedural wood grain texture generator.
 Grain is synthesised from fractional Brownian motion (stacked smooth-noise
 octaves) warped into ring bands, then mapped through a colour palette.
 
-Supported styles: 'walnut', 'oak'
+Supported styles: 'walnut', 'oak', 'gilded'
 grain_direction:  'horizontal' (grain fibres run left-right)
                   'vertical'   (grain fibres run top-bottom)
 """
@@ -47,6 +47,20 @@ STYLES = {
         "distortion":   1.0,
         "fine_weight":  0.17,
         "pore_weight":  0.06,  # oak pores slightly more prominent
+    },
+    "gilded": {
+        # Gold palette: shadow recess → base gold → catch-light
+        # NO ring_freq / distortion — rendered by _generate_gilded, not the grain path
+        "palette": [
+            (120,  85, 20),   # shadow recess
+            (165, 125, 38),   # shadow face
+            (205, 162, 55),   # base gold (mid-tone)
+            (235, 195, 95),   # illuminated face
+            (255, 240, 160),  # catch-light
+        ],
+        "leaf_noise":  8,     # ±brightness units of random leaf variation (0–255)
+        "fleck_rate":  0.04,  # fraction of pixels darkened to simulate worn gilding
+        "fleck_depth": 0.14,  # maximum darkening for age flecks (fraction of 1.0)
     },
 }
 
@@ -98,6 +112,34 @@ def _fbm(shape: tuple, base_scale: int, octaves: int = 4,
 
 
 # ---------------------------------------------------------------------------
+# Gilded texture
+# ---------------------------------------------------------------------------
+
+def _generate_gilded(width: int, height: int, seed: int) -> Image.Image:
+    """
+    Gold leaf texture: flat mid-gold base with subtle random variation and
+    scattered age flecks.  No ring pattern — bevel shading in frame_compositor
+    provides all the depth and faceting.
+    """
+    cfg = STYLES["gilded"]
+    rng = np.random.default_rng(seed)
+
+    # Base colour: solid mid-gold (palette index 2) with ±leaf_noise variation
+    base  = np.array(cfg["palette"][2], dtype=np.float32) / 255.0
+    noise = rng.integers(-cfg["leaf_noise"], cfg["leaf_noise"] + 1,
+                         (height, width, 3), dtype=np.int16).astype(np.float32) / 255.0
+    canvas = np.broadcast_to(base, (height, width, 3)).copy() + noise
+
+    # Scattered age flecks: slightly darkened pixels simulating worn gilding
+    fleck_mask = rng.random((height, width)) < cfg["fleck_rate"]
+    if fleck_mask.any():
+        depths = rng.uniform(0.05, cfg["fleck_depth"], (height, width)) * fleck_mask
+        canvas -= depths[:, :, np.newaxis]
+
+    return Image.fromarray((np.clip(canvas, 0.0, 1.0) * 255.0).astype(np.uint8), "RGB")
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -114,12 +156,15 @@ def generate(
     Parameters
     ----------
     width, height     : output pixel dimensions
-    style             : 'walnut' or 'oak'
+    style             : 'walnut', 'oak', or 'gilded'
     grain_direction   : 'horizontal' or 'vertical'
     seed              : RNG seed for reproducibility
     """
     if style not in STYLES:
         raise ValueError(f"style must be one of {list(STYLES)}, got '{style}'")
+
+    if style == "gilded":
+        return _generate_gilded(width, height, seed)
 
     cfg   = STYLES[style]
     shape = (height, width)
@@ -182,3 +227,8 @@ if __name__ == "__main__":
             path = out / f"wood_{style}_{direction}.png"
             img.save(str(path))
             print(f"Saved {path}")
+    # Gilded has no grain direction — save one sample
+    img  = generate(400, 400, style="gilded")
+    path = out / "wood_gilded.png"
+    img.save(str(path))
+    print(f"Saved {path}")
