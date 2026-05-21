@@ -86,7 +86,18 @@ def save_metadata(artwork: dict, image_url_str: str, dest: Path) -> None:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
 
+def _artwork_paths(artwork: dict) -> tuple[Path, Path]:
+    """Return (img_path, meta_path) for an artwork dict."""
+    artist_slug   = slugify(artwork.get("artist_title") or "unknown_artist")
+    artwork_id    = artwork.get("id")
+    filename_stem = f"{slugify(artwork.get('title') or str(artwork_id))}_{artwork_id}"
+    img_path  = OUTPUT_DIR / artist_slug / "image" / f"{filename_stem}.jpg"
+    meta_path = OUTPUT_DIR / artist_slug / "meta"  / f"{filename_stem}.json"
+    return img_path, meta_path
+
+
 def collect_artworks(target: int) -> list[dict]:
+    """Return up to *target* artworks that are not yet on disk."""
     styles = ["Impressionism", "Post-Impressionism"]
     seen_ids: set[int] = set()
     results = []
@@ -112,6 +123,10 @@ def collect_artworks(target: int) -> list[dict]:
                 if not item.get("image_id"):
                     continue
                 seen_ids.add(artwork_id)
+                img_path, meta_path = _artwork_paths(item)
+                if img_path.exists() and meta_path.exists():
+                    log.info("Already on disk, skipping: %s", img_path.stem)
+                    continue
                 results.append(item)
                 if len(results) >= target:
                     break
@@ -134,28 +149,23 @@ def process_artwork(artwork: dict) -> bool:
     if not image_id:
         return False
 
-    artist_raw = artwork.get("artist_title") or "unknown_artist"
-    artist_slug = slugify(artist_raw)
-    artwork_id = artwork.get("id")
-    title_slug = slugify(artwork.get("title") or str(artwork_id))
-    filename_stem = f"{title_slug}_{artwork_id}"
-
-    img_path = OUTPUT_DIR / artist_slug / "image" / f"{filename_stem}.jpg"
-    meta_path = OUTPUT_DIR / artist_slug / "meta" / f"{filename_stem}.json"
+    img_path, meta_path = _artwork_paths(artwork)
 
     if img_path.exists() and meta_path.exists():
-        log.info("Already exists, skipping: %s", filename_stem)
+        log.info("Already exists, skipping: %s", img_path.stem)
         return True
 
     url = image_url(image_id)
-    log.info("Downloading: %s — %s", artwork.get("title"), artist_raw)
+    log.info("Downloading: %s — %s", artwork.get("title"),
+             artwork.get("artist_title") or "unknown")
 
     if not download_image(url, img_path):
-        log.warning("No image available for %s (id=%s)", artwork.get("title"), artwork_id)
+        log.warning("No image available for %s (id=%s)",
+                    artwork.get("title"), artwork.get("id"))
         return False
 
     save_metadata(artwork, url, meta_path)
-    log.info("Saved %s", filename_stem)
+    log.info("Saved %s", img_path.stem)
     return True
 
 
