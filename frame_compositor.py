@@ -31,7 +31,6 @@ import styles
 TV_W, TV_H = 3840, 2160
 FRAME_W    = 160          # frame rail width
 MAT_W      = 70           # mat border around artwork
-BORDER_MIN = 80           # minimum black gap outside the frame
 LINER_W    = 18           # inner liner width for double-mat configs
 
 BG_COLOR  = (17, 17, 17)      # near-black canvas
@@ -326,6 +325,57 @@ def _mat_shadow(
 
 
 # ---------------------------------------------------------------------------
+# Edge shadow
+# ---------------------------------------------------------------------------
+
+def _edge_shadow(
+    canvas: Image.Image,
+    fx: int, fy: int,
+    fow: int, foh: int,
+    depth: int = 20,
+) -> Image.Image:
+    """
+    Soften the outer frame edges that border the black background bars.
+
+    On the filling axis (where the frame is flush with the canvas edge)
+    there is no black bar and therefore no shadow.  On the non-filling axis
+    a linear gradient darkens the outermost *depth* pixels of the frame from
+    fully black (outermost edge) to transparent (*depth* px inward), giving a
+    smooth transition rather than a hard cut between frame and background.
+    """
+    if fy == 0 and fx == 0:
+        return canvas   # frame fills canvas completely — nothing to do
+
+    arr = np.array(canvas, dtype=np.float32)
+    bg  = np.array(BG_COLOR, dtype=np.float32)
+    # alpha[0] = 1.0 (outer edge → pure background), alpha[-1] = 0.0 (transparent)
+    alpha = np.linspace(1.0, 0.0, depth, dtype=np.float32)
+
+    if fy > 0:
+        # Wide composition: black bars top and bottom; shadow on those edges.
+        a = alpha[:, np.newaxis, np.newaxis]          # (depth, 1, 1)
+        arr[fy : fy + depth, fx : fx + fow] = (
+            arr[fy : fy + depth, fx : fx + fow] * (1.0 - a) + bg * a
+        )
+        a = alpha[::-1][:, np.newaxis, np.newaxis]    # reversed for bottom edge
+        arr[fy + foh - depth : fy + foh, fx : fx + fow] = (
+            arr[fy + foh - depth : fy + foh, fx : fx + fow] * (1.0 - a) + bg * a
+        )
+    else:
+        # Tall composition: black bars left and right; shadow on those edges.
+        a = alpha[np.newaxis, :, np.newaxis]          # (1, depth, 1)
+        arr[fy : fy + foh, fx : fx + depth] = (
+            arr[fy : fy + foh, fx : fx + depth] * (1.0 - a) + bg * a
+        )
+        a = alpha[::-1][np.newaxis, :, np.newaxis]    # reversed for right edge
+        arr[fy : fy + foh, fx + fow - depth : fx + fow] = (
+            arr[fy : fy + foh, fx + fow - depth : fx + fow] * (1.0 - a) + bg * a
+        )
+
+    return Image.fromarray(arr.clip(0, 255).astype(np.uint8))
+
+
+# ---------------------------------------------------------------------------
 # Info card
 # ---------------------------------------------------------------------------
 
@@ -476,33 +526,46 @@ def compose(
     """
     art = artwork.convert("RGB")
 
-    if mat:
-        max_art_w = TV_W - 2 * (BORDER_MIN + FRAME_W + MAT_W)
-        max_art_h = TV_H - 2 * (BORDER_MIN + FRAME_W + MAT_W)
+    # Scale the composition so the frame outer edge fills one canvas axis
+    # edge-to-edge, with the other axis letterboxed/pillarboxed in black.
+    #
+    # The fixed border (frame + optional mat) is the same on all four sides.
+    # inner_ar is the aspect ratio of the available art area after subtracting
+    # that border from the canvas.  If the artwork is wider than inner_ar the
+    # composition fills the canvas width; otherwise it fills the height.
+    border   = 2 * (FRAME_W + (MAT_W if mat else 0))
+    inner_ar = (TV_W - border) / (TV_H - border)
+    art_ar   = art.width / art.height
+
+    if art_ar >= inner_ar:
+        # Landscape-biased: fill canvas width, letterbox top/bottom
+        fow   = TV_W
+        art_w = fow - border
+        art_h = round(art_w / art_ar)
+        foh   = art_h + border
     else:
-        max_art_w = TV_W - 2 * (BORDER_MIN + FRAME_W)
-        max_art_h = TV_H - 2 * (BORDER_MIN + FRAME_W)
-    art.thumbnail((max_art_w, max_art_h), Image.LANCZOS)
-    art_w, art_h = art.size
+        # Portrait-biased: fill canvas height, pillarbox left/right
+        foh   = TV_H
+        art_h = foh - border
+        art_w = round(art_h * art_ar)
+        fow   = art_w + border
+
+    art = art.resize((art_w, art_h), Image.LANCZOS)
+
+    # Centre the frame on the canvas (one axis will be 0, the other ≥ 0)
+    fx = (TV_W - fow) // 2
+    fy = (TV_H - foh) // 2
 
     if mat:
         mat_w = art_w + 2 * MAT_W
         mat_h = art_h + 2 * MAT_W
-        fow   = mat_w + 2 * FRAME_W
-        foh   = mat_h + 2 * FRAME_W
-        fx    = (TV_W - fow) // 2
-        fy    = (TV_H - foh) // 2
         mx    = fx + FRAME_W
         my    = fy + FRAME_W
         ax    = mx + MAT_W
         ay    = my + MAT_W
     else:
-        fow = art_w + 2 * FRAME_W
-        foh = art_h + 2 * FRAME_W
-        fx  = (TV_W - fow) // 2
-        fy  = (TV_H - foh) // 2
-        ax  = fx + FRAME_W
-        ay  = fy + FRAME_W
+        ax = fx + FRAME_W
+        ay = fy + FRAME_W
 
     # Resolve wood style — fall back to walnut for styles not yet rendered
     _wood = styles.FRAME_STYLES.get(frame_style, styles.FRAME_STYLES["walnut"])["wood_style"]
@@ -539,5 +602,8 @@ def compose(
     card_x = fx + (fow - card.width) // 2
     card_y = fy + foh - FRAME_W + 10
     canvas.paste(card, (card_x, card_y))
+
+    # Soft shadow where the frame outer edge meets the black bars
+    canvas = _edge_shadow(canvas, fx, fy, fow, foh)
 
     return canvas
