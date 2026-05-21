@@ -12,6 +12,8 @@ presentations sized for a 4K TV (3840×2160).
 arty/
 ├── fetch_artic.py          # Download artwork + metadata from the ARTIC API
 ├── wood_texture.py         # Procedural wood-grain texture module
+├── styles.py               # Frame and mat style catalog (FRAME_STYLES, MAT_CONFIGS)
+├── style_selector.py       # Auto-selects frame/mat style from painting analysis + metadata
 ├── frame_compositor.py     # Core compositing module (PIL Image in → PIL Image out)
 ├── process_collection.py   # CLI runner: walks artic/, calls frame_compositor, saves output
 ├── painting_analysis.py    # Perceptual colour analysis (temperature, accent colours, brightness, contrast)
@@ -65,19 +67,23 @@ Re-runs are idempotent — existing files are skipped.
 ### 2 — Generate framed presentations
 
 ```bash
-python3 process_collection.py [--input DIR] [--output DIR] [--style walnut|oak] [--force]
+python3 process_collection.py [--input DIR] [--output DIR] \
+        [--override-frame STYLE] [--override-mat CONFIG] [--force]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--input`  / `-i` | `/Users/paulf/arty/artic`     | Root of downloaded artwork |
-| `--output` / `-o` | `/Users/paulf/arty/processed` | Output directory           |
-| `--style`  / `-s` | `walnut`                      | Frame wood style           |
-| `--force`  / `-f` | off                           | Re-process existing outputs |
+| `--input`  / `-i`    | `/Users/paulf/arty/artic`     | Root of downloaded artwork |
+| `--output` / `-o`    | `/Users/paulf/arty/processed` | Output directory |
+| `--override-frame`   | auto | Force a specific frame style (key from `styles.FRAME_STYLES`) |
+| `--override-mat`     | auto | Force a specific mat config (key from `styles.MAT_CONFIGS`) |
+| `--force`  / `-f`    | off  | Re-process existing outputs |
 
-Each input image produces one 3840×2160 JPEG. Existing outputs are skipped
-unless `--force` is passed. Processing all 40 images takes roughly 25 seconds
-on Apple Silicon.
+Each image is analysed for colour temperature, brightness, and contrast;
+`style_selector` then picks a frame style and mat configuration automatically.
+Pass `--override-frame` or `--override-mat` to force specific choices.
+Existing outputs are skipped unless `--force` is passed. Processing all 40
+images takes roughly 25 seconds on Apple Silicon.
 
 `composite.py` is an earlier standalone processor with the same CLI surface;
 it is superseded by `frame_compositor.py` + `process_collection.py`.
@@ -99,7 +105,28 @@ Prints a JSON dict of perceptual colour properties:
 
 Useful for picking mat colours and understanding a painting's mood before compositing.
 
-### 4 — Inspect wood textures
+### 4 — Inspect style selection
+
+```bash
+python3 style_selector.py <image_path> [meta.json]
+```
+
+Prints the frame and mat styles that would be chosen for an image:
+
+```json
+{
+  "frame_style": "gilded",
+  "mat_config": "double_accent",
+  "mat_accent_color": [223, 197, 186]
+}
+```
+
+`frame_style` is a key from `styles.FRAME_STYLES`; `mat_config` is a key from
+`styles.MAT_CONFIGS`. `mat_accent_color` is the most vivid accent colour from
+the painting, lightened 35% and desaturated 20% for mat use, or `null` if the
+painting has no suitable accent or the mat config doesn't use one.
+
+### 5 — Inspect wood textures
 
 ```bash
 python3 wood_texture.py [outdir]
