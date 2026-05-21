@@ -10,9 +10,11 @@ presentations sized for a 4K TV (3840×2160).
 
 ```
 arty/
-├── fetch_artic.py      # Download artwork + metadata from the ARTIC API
-├── wood_texture.py     # Procedural wood-grain texture module
-├── composite.py        # Composite artwork into framed 4K JPEGs
+├── fetch_artic.py          # Download artwork + metadata from the ARTIC API
+├── wood_texture.py         # Procedural wood-grain texture module
+├── frame_compositor.py     # Core compositing module (PIL Image in → PIL Image out)
+├── process_collection.py   # CLI runner: walks artic/, calls frame_compositor, saves output
+└── composite.py            # Legacy standalone processor (superseded by the two above)
 
 /Users/paulf/arty/
 ├── artic/              # Raw downloads
@@ -62,7 +64,7 @@ Re-runs are idempotent — existing files are skipped.
 ### 2 — Generate framed presentations
 
 ```bash
-python3 composite.py [--input DIR] [--output DIR] [--style walnut|oak]
+python3 process_collection.py [--input DIR] [--output DIR] [--style walnut|oak] [--force]
 ```
 
 | Flag | Default | Description |
@@ -70,9 +72,14 @@ python3 composite.py [--input DIR] [--output DIR] [--style walnut|oak]
 | `--input`  / `-i` | `/Users/paulf/arty/artic`     | Root of downloaded artwork |
 | `--output` / `-o` | `/Users/paulf/arty/processed` | Output directory           |
 | `--style`  / `-s` | `walnut`                      | Frame wood style           |
+| `--force`  / `-f` | off                           | Re-process existing outputs |
 
-Each input image produces one 3840×2160 JPEG.  Processing all 40 images
-takes roughly 25 seconds on Apple Silicon.
+Each input image produces one 3840×2160 JPEG. Existing outputs are skipped
+unless `--force` is passed. Processing all 40 images takes roughly 25 seconds
+on Apple Silicon.
+
+`composite.py` is an earlier standalone processor with the same CLI surface;
+it is superseded by `frame_compositor.py` + `process_collection.py`.
 
 ### 3 — Inspect wood textures
 
@@ -92,7 +99,7 @@ Saves four 400×400 PNG samples (walnut/oak × horizontal/vertical grain) to
 │  ┌───────────────────────────────────────────────────┐  │
 │  │  wood frame rail  (100 px, mitered 45° corners)   │  │
 │  │  ┌─────────────────────────────────────────────┐  │  │
-│  │  │  warm off-white mat  (72 px)                │  │  │
+│  │  │  warm off-white mat  (70 px)                │  │  │
 │  │  │  ┌───────────────────────────────────────┐  │  │  │
 │  │  │  │                                       │  │  │  │
 │  │  │  │             artwork                   │  │  │  │

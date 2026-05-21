@@ -12,9 +12,10 @@ Always use `python3`. The system `python` is Python 2.7 and will fail on type
 annotations.
 
 ```bash
-python3 fetch_artic.py
-python3 composite.py [--input DIR] [--output DIR] [--style walnut|oak]
-python3 wood_texture.py [outdir]   # generates 4 PNG samples for visual check
+python3 fetch_artic.py                                           # download
+python3 process_collection.py [--input DIR] [--output DIR] \
+                               [--style walnut|oak] [--force]   # process
+python3 wood_texture.py [outdir]   # save 4 PNG samples for visual inspection
 ```
 
 ## Dependencies
@@ -28,9 +29,11 @@ Pillow 10+ is required (`ImageFont.load_default(size=…)` and `textlength`).
 ## File map
 
 ```
-fetch_artic.py    Download artwork + metadata from the ARTIC API
-wood_texture.py   Procedural wood-grain texture module (importable)
-composite.py      Composite artwork into framed 4K JPEGs (imports wood_texture)
+fetch_artic.py          Download artwork + metadata from the ARTIC API
+wood_texture.py         Procedural wood-grain texture module (importable)
+frame_compositor.py     Core compositing module — PIL Image in, PIL Image out
+process_collection.py   CLI runner that walks artic/ and calls frame_compositor
+composite.py            Legacy standalone processor (superseded; kept for reference)
 ```
 
 Data lives **outside the repo** at `/Users/paulf/arty/`:
@@ -41,7 +44,7 @@ Data lives **outside the repo** at `/Users/paulf/arty/`:
 │   └── {artist}/
 │       ├── image/{stem}.jpg
 │       └── meta/{stem}.json
-└── processed/      composite.py writes here
+└── processed/      process_collection.py writes here
     └── {artist}/{stem}.jpg
 ```
 
@@ -56,15 +59,18 @@ REQUEST_DELAY = 1.0         # polite delay between HTTP requests (seconds)
 The styles queried are hardcoded in `collect_artworks()`:
 `["Impressionism", "Post-Impressionism"]`
 
-**composite.py** — layout constants (pixels at 4K):
+**frame_compositor.py** — layout constants (pixels at 4K):
 ```python
-TV_W, TV_H  = 3840, 2160
-FRAME_W     = 100       # frame rail width
-MAT_W       = 72        # mat border around artwork
-BORDER_MIN  = 80        # minimum black gap outside frame
-BG_COLOR    = (17, 17, 17)
-MAT_COLOR   = (240, 234, 220)
+TV_W, TV_H = 3840, 2160
+FRAME_W    = 100        # frame rail width
+MAT_W      = 70         # mat border around artwork
+BORDER_MIN = 80         # minimum black gap outside the frame
+BG_COLOR   = (17, 17, 17)
+MAT_COLOR  = (240, 234, 220)
 ```
+
+Note: `composite.py` uses `MAT_W = 72`; `frame_compositor.py` uses `MAT_W = 70`.
+They are independent implementations.
 
 ## Extension points
 
@@ -81,16 +87,22 @@ STYLES = {
     },
 }
 ```
-`composite.py` picks up new styles automatically via `choices=list(wood_texture.STYLES)`.
+Both `process_collection.py` and `composite.py` pick up new styles
+automatically via `choices=list(wood_texture.STYLES)`.
 
 **Change frame geometry** — edit `FRAME_W`, `MAT_W`, or `BORDER_MIN` in
-`composite.py`. Everything else is derived from those values.
+`frame_compositor.py`. Everything else is derived from those values.
 
 **Change which artworks are fetched** — edit the `styles` list in
 `collect_artworks()` in `fetch_artic.py`. The values are Elasticsearch
 `match` queries against the ARTIC `style_titles` field.
 
 ## Architecture notes
+
+**Module split** — `frame_compositor.py` is the pure image-processing core:
+it accepts a PIL Image and a metadata dict, and returns a PIL Image. No file
+I/O, no CLI. `process_collection.py` is the thin CLI wrapper that handles
+discovery, loading, saving, skipping, and logging.
 
 **Wood texture pipeline** (`wood_texture.generate`):
 1. 5-octave FBM at large scale → warp field (bends ring bands)
@@ -100,15 +112,22 @@ STYLES = {
    perpendicular to fibre direction)
 5. Palette interpolation maps [0,1] texture value through the style's colour stops
 
-**Frame corner miters** (`composite._draw_frame`):
+**Frame corner miters** (`frame_compositor._draw_frame`):
 Each of the four rails is defined as a trapezoid polygon. The diagonals from
-outer corner to inner corner produce exact 45° miter joints. Each rail gets
-its own independently-seeded wood texture so grain never tiles visually across
-corners. The molding brightness profile is reversed for bottom and right rails
-so the outer (bright) edge always faces away from the artwork.
+outer corner to inner corner produce exact 45° miter joints. Each rail is
+given its own wood texture at the correct grain direction. The molding
+brightness profile is reversed for bottom and right rails so the outer
+(bright) edge always faces away from the artwork.
 
-**Seeding** — `_seed_from_name(stem)` = `md5(filename)[:8]` as a 31-bit int.
-Same artwork always gets the same frame texture across re-runs.
+**Info card** (`frame_compositor._info_card`):
+Rendered as a standalone PIL Image sized to fit its content (max 500 px wide).
+Font: Georgia 30 px (title), 22 px (artist, date). Pasted 8 px inside the
+lower-right corner of the mat; will overlap the artwork corner slightly for
+typical three-line cards at these font sizes.
+
+**Seeding** — `process_collection._seed(stem)` = `md5(stem)[:8]` as a 31-bit
+int. Same filename always produces the same frame texture across re-runs.
+`composite.py` uses an identical approach in `_seed_from_name`.
 
 **Mat shadow** — Gaussian blur of a filled rectangle at the artwork boundary,
 clipped to mat-only pixels via `ImageChops.multiply`. Simulates the artwork
@@ -117,5 +136,13 @@ sitting slightly above the mat surface.
 ## There is no test suite
 
 Use `python3 wood_texture.py /tmp/samples` to visually inspect texture changes.
-Use a single-image invocation of `composite.composite()` to check layout changes
-before running the full batch.
+Use a single-image call to `frame_compositor.compose()` to check layout
+changes before running the full batch:
+
+```python
+from PIL import Image
+import json, frame_compositor
+img  = Image.open("/Users/paulf/arty/artic/claude_monet/image/water_lilies_16568.jpg")
+meta = json.loads(open("/Users/paulf/arty/artic/claude_monet/meta/water_lilies_16568.json").read())
+frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
+```
