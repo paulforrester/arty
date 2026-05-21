@@ -7,7 +7,12 @@ and save 3840×2160 JPEG results.
 
 Usage
 -----
+    # Full collection
     python3 process_collection.py [--input DIR] [--output DIR] [--style STYLE]
+                                  [--force]
+
+    # Single file (useful for testing)
+    python3 process_collection.py --file PATH [--output DIR] [--style STYLE]
                                   [--force]
 
 Input layout:   {input}/{artist}/image/{stem}.jpg
@@ -102,6 +107,11 @@ def main() -> None:
         action="store_true",
         help="Re-process images that already have output files",
     )
+    parser.add_argument(
+        "--file",
+        metavar="PATH",
+        help="Process a single image file instead of the whole collection",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -110,13 +120,19 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
-    in_dir  = Path(args.input)
     out_dir = Path(args.output)
 
-    images = sorted(in_dir.glob("*/image/*.jpg"))
-    if not images:
-        log.error("No images found under %s", in_dir)
-        sys.exit(1)
+    if args.file:
+        images = [Path(args.file)]
+        if not images[0].exists():
+            log.error("File not found: %s", args.file)
+            sys.exit(1)
+    else:
+        in_dir = Path(args.input)
+        images = sorted(in_dir.glob("*/image/*.jpg"))
+        if not images:
+            log.error("No images found under %s", in_dir)
+            sys.exit(1)
 
     log.info("Found %d image(s). Style: %s  Output: %s",
              len(images), args.style, out_dir)
