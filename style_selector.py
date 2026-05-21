@@ -16,17 +16,24 @@ Public API
 from __future__ import annotations
 
 import colorsys
+import logging
 
 import styles
 
+log = logging.getLogger(__name__)
+
 
 def _mat_accent(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Lighten by +35 pp and desaturate by −20 pp (HLS) for mat use."""
+    """Lighten by +20 pp and desaturate by −10 pp (HLS) for mat use.
+    Falls back to warm ivory if the result is still too grey to read."""
     r, g, b = (v / 255.0 for v in rgb)
     h, l, s = colorsys.rgb_to_hls(r, g, b)
-    l = min(1.0, l + 0.35)
-    s = max(0.0, s - 0.20)
+    l = min(1.0, l + 0.20)
+    s = max(0.0, s - 0.10)
     r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    _, s_hsv, _ = colorsys.rgb_to_hsv(r2, g2, b2)
+    if s_hsv * 255 < 15:
+        return (245, 238, 220)   # warm ivory — better than a grey liner
     return (round(r2 * 255), round(g2 * 255), round(b2 * 255))
 
 
@@ -110,6 +117,7 @@ def select(analysis: dict, meta: dict) -> dict:
     mat_accent_color: tuple[int, int, int] | None = None
     if styles.MAT_CONFIGS[mat_config]["uses_accent"] and accents:
         mat_accent_color = _mat_accent(accents[0])
+        log.info("      accent %s", mat_accent_color)
 
     return {
         "frame_style":      frame_style,

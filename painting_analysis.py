@@ -207,6 +207,10 @@ def analyse(image: Image.Image) -> dict:
         candidate_idx = candidate_idx[np.argsort(-C_c[candidate_idx])][:3]
         for i in candidate_idx:
             rgb_f = _lab_to_rgb(centers[i : i + 1])[0]
+            # Discard near-grey candidates — they wash out to nothing on a mat liner
+            hsv = _rgb_to_hsv(rgb_f.reshape(1, 3))
+            if hsv[0, 1] * 255 < 25:
+                continue
             accent_colors.append(
                 tuple(int(v) for v in (rgb_f * 255.0).round().clip(0, 255))
             )
