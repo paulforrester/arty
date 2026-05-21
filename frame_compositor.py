@@ -10,14 +10,15 @@ Public API
 ----------
     compose(artwork, meta, *, wood_style="walnut", seed=42) -> Image.Image
 
-The `meta` dict accepts: title, artist, date  (all optional; reserved for
-an info card overlay that will be added in a future layer).
+meta keys used: title, artist, date  (all optional)
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 import wood_texture
 
@@ -163,6 +164,78 @@ def _mat_shadow(
 
 
 # ---------------------------------------------------------------------------
+# Info card
+# ---------------------------------------------------------------------------
+
+def _font(size: int) -> ImageFont.FreeTypeFont:
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        "/Library/Fonts/Georgia.ttf",
+        "/System/Library/Fonts/Times.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+    ]
+    for path in candidates:
+        if Path(path).exists():
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _info_card(meta: dict) -> Image.Image:
+    """
+    Render a small cream card showing title, artist, and date.
+
+    Sized to fit its content; the caller places it on the canvas.
+    """
+    raw_title  = meta.get("title")  or "Untitled"
+    raw_artist = meta.get("artist") or ""
+    raw_date   = meta.get("date")   or ""
+
+    # artist_display can be multi-line — use only the primary line
+    artist = raw_artist.split("\n")[0].strip()
+    # Truncate long titles with ellipsis
+    title  = raw_title[:46] + ("…" if len(raw_title) > 46 else "")
+
+    f_title = _font(30)
+    f_sub   = _font(22)
+    pad     = 14
+    gap     = 6
+
+    lines = [(title, f_title)]
+    if artist:
+        lines.append((artist, f_sub))
+    if raw_date:
+        lines.append((raw_date, f_sub))
+
+    # Measure on a throw-away canvas
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    widths  = [int(probe.textlength(t, font=f)) for t, f in lines]
+    heights = [f.getbbox("Ag")[3] - f.getbbox("Ag")[1] for _, f in lines]
+
+    card_w = min(500, max(widths) + pad * 2)
+    card_h = pad * 2 + sum(heights) + gap * (len(lines) - 1)
+
+    card = Image.new("RGB", (card_w, card_h), (246, 240, 226))
+    draw = ImageDraw.Draw(card)
+    draw.rectangle([0, 0, card_w - 1, card_h - 1],
+                   outline=(168, 152, 132), width=1)
+
+    y = pad
+    for i, (text, font) in enumerate(lines):
+        draw.text((pad, y), text, font=font,
+                  fill=(28, 18, 10) if i == 0 else (70, 55, 38))
+        y += heights[i] + gap
+
+    return card
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -176,19 +249,20 @@ def compose(
     """
     Return a 3840×2160 PIL Image: *artwork* centered on a near-black
     background, surrounded by a warm off-white mat (~70 px) and a
-    wood-grain frame (~100 px) with bevel shading.
+    wood-grain frame (~100 px) with bevel shading.  A small cream info
+    card showing title, artist, and date is placed in the lower-right
+    corner of the mat.
 
     Parameters
     ----------
     artwork    : source image in any mode; converted to RGB internally
     meta       : dict with optional keys title, artist, date
-                 (reserved for info-card overlay; not used yet)
     wood_style : 'walnut' (default) or 'oak' — any key in wood_texture.STYLES
     seed       : RNG seed; same seed always produces the same frame texture
     """
     art = artwork.convert("RGB")
 
-    # Resize to fit within the available artwork area, preserving aspect ratio
+    # Resize artwork to fit the available area, preserving aspect ratio
     max_art_w = TV_W - 2 * (BORDER_MIN + FRAME_W + MAT_W)
     max_art_h = TV_H - 2 * (BORDER_MIN + FRAME_W + MAT_W)
     art.thumbnail((max_art_w, max_art_h), Image.LANCZOS)
@@ -203,9 +277,9 @@ def compose(
     # Top-left origins on the 4K canvas
     fx = (TV_W - fow) // 2
     fy = (TV_H - foh) // 2
-    mx = fx + FRAME_W              # mat
+    mx = fx + FRAME_W              # mat origin
     my = fy + FRAME_W
-    ax = mx + MAT_W                # artwork
+    ax = mx + MAT_W                # artwork origin
     ay = my + MAT_W
 
     canvas = Image.new("RGB", (TV_W, TV_H), BG_COLOR)
@@ -218,5 +292,11 @@ def compose(
     canvas.paste(mat_img, (mx, my))
 
     canvas.paste(art, (ax, ay))
+
+    # Info card — lower-right corner of the mat, 8 px from the frame inner edges
+    card   = _info_card(meta)
+    card_x = mx + mat_w - card.width  - 8
+    card_y = my + mat_h - card.height - 8
+    canvas.paste(card, (card_x, card_y))
 
     return canvas
