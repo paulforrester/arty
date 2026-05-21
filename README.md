@@ -14,6 +14,7 @@ arty/
 ├── wood_texture.py         # Procedural wood-grain texture module
 ├── frame_compositor.py     # Core compositing module (PIL Image in → PIL Image out)
 ├── process_collection.py   # CLI runner: walks artic/, calls frame_compositor, saves output
+├── painting_analysis.py    # Perceptual colour analysis (temperature, accent colours, brightness, contrast)
 └── composite.py            # Legacy standalone processor (superseded by the two above)
 
 /Users/paulf/arty/
@@ -31,7 +32,7 @@ arty/
 ## Requirements
 
 ```
-pip install requests Pillow numpy
+pip install requests Pillow numpy scikit-learn
 ```
 
 Python 3.11+ is required (type-annotation syntax).
@@ -81,7 +82,24 @@ on Apple Silicon.
 `composite.py` is an earlier standalone processor with the same CLI surface;
 it is superseded by `frame_compositor.py` + `process_collection.py`.
 
-### 3 — Inspect wood textures
+### 3 — Analyse a painting
+
+```bash
+python3 painting_analysis.py <image_path>
+```
+
+Prints a JSON dict of perceptual colour properties:
+
+| Key | Range | Description |
+|-----|-------|-------------|
+| `palette_temperature` | −1.0 … +1.0 | Hue balance: −1 = pure cool (cyan/blue), +1 = pure warm (red/orange) |
+| `accent_colors` | list of RGB tuples | Up to 3 vivid, mid-tone colours not dominant in the image |
+| `brightness` | 0.0 … 1.0 | Perceptual average luminance |
+| `contrast` | 0.0 … 1.0 | Standard deviation of luminance |
+
+Useful for picking mat colours and understanding a painting's mood before compositing.
+
+### 4 — Inspect wood textures
 
 ```bash
 python3 wood_texture.py [outdir]

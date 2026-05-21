@@ -21,7 +21,7 @@ python3 wood_texture.py [outdir]   # save 4 PNG samples for visual inspection
 ## Dependencies
 
 ```
-pip install requests Pillow numpy
+pip install requests Pillow numpy scikit-learn
 ```
 
 Pillow 10+ is required (`ImageFont.load_default(size=…)` and `textlength`).
@@ -33,6 +33,7 @@ fetch_artic.py          Download artwork + metadata from the ARTIC API
 wood_texture.py         Procedural wood-grain texture module (importable)
 frame_compositor.py     Core compositing module — PIL Image in, PIL Image out
 process_collection.py   CLI runner that walks artic/ and calls frame_compositor
+painting_analysis.py    Perceptual colour analysis — PIL Image in, dict out
 composite.py            Legacy standalone processor (superseded; kept for reference)
 ```
 
@@ -58,6 +59,14 @@ REQUEST_DELAY = 1.0         # polite delay between HTTP requests (seconds)
 ```
 The styles queried are hardcoded in `collect_artworks()`:
 `["Impressionism", "Post-Impressionism"]`
+
+**painting_analysis.py** — tuning constants:
+```python
+_MAX_PIXELS = 40_000    # downsample ceiling before all analysis
+_K          = 12        # k-means cluster count for accent colour extraction
+```
+Accent colour thresholds are inline in `analyse()`: L\* 15–88 (mid-tone),
+C\* > 20 (saturated), cluster size 1–25% (present but not dominant).
 
 **frame_compositor.py** — layout constants (pixels at 4K):
 ```python
