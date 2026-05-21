@@ -221,8 +221,10 @@ def _fetch_by_artist(
     """
     Query the ARTIC search endpoint for works by *artist_name*.
 
-    exact=True  uses term[artist_title.keyword] — precise, no name variants
-    exact=False uses match[artist_title]        — fuzzy, handles variants
+    exact=True  uses term[artist_title.keyword] — exact stored value only
+    exact=False uses match_phrase[artist_title] — all query words must appear
+                in order, handling partial names like "Van Gogh" → "Vincent
+                van Gogh" without pulling unrelated artists
     """
     must: dict[str, str] = {}
     idx = 0
@@ -230,7 +232,7 @@ def _fetch_by_artist(
     if exact:
         must[f"query[bool][must][{idx}][term][artist_title.keyword]"] = artist_name
     else:
-        must[f"query[bool][must][{idx}][match][artist_title]"] = artist_name
+        must[f"query[bool][must][{idx}][match_phrase][artist_title]"] = artist_name
     idx += 1
 
     must[f"query[bool][must][{idx}][term][is_public_domain]"] = "true"
@@ -259,9 +261,11 @@ def collect_artworks_by_artist(
     stats: dict[str, int] = {
         "found": 0, "skipped_exists": 0,
         "skipped_no_image": 0, "skipped_not_public": 0,
+        "skipped_wrong_artist": 0,
     }
-    seen_ids: set[int] = set()
-    results:  list[dict] = []
+    seen_ids:    set[int] = set()
+    results:     list[dict] = []
+    query_words: list[str] = artist_name.lower().split()
 
     # Probe with exact match to decide whether to use exact or fuzzy for all pages.
     # Fewer than 5 total results suggests the stored name differs from our query.
@@ -297,6 +301,19 @@ def collect_artworks_by_artist(
             if artwork_id in seen_ids:
                 continue
             seen_ids.add(artwork_id)
+
+            # Post-filter: confirm every query word appears in the stored
+            # artist_title.  Catches any noise that slips past match_phrase
+            # (e.g. a different "van Gogh" family member).
+            item_artist = (item.get("artist_title") or "").lower()
+            if not all(w in item_artist for w in query_words):
+                log.debug(
+                    "Artist mismatch, skipping: '%s' (query: '%s')",
+                    item.get("artist_title"), artist_name,
+                )
+                stats["skipped_wrong_artist"] += 1
+                continue
+
             stats["found"] += 1
 
             if not item.get("is_public_domain"):
@@ -335,12 +352,16 @@ def run_artist_mode(artists: list[str], limit: int, style: str | None) -> None:
     for artist in artists:
         log.info("--- %s ---", artist)
         artworks, stats = collect_artworks_by_artist(artist, limit=limit, style=style)
+        extras = ""
+        if stats["skipped_wrong_artist"]:
+            extras = f"  wrong artist: {stats['skipped_wrong_artist']}"
         log.info(
-            "  %d new works to download  (on disk: %d  no image: %d  not public: %d)",
+            "  %d new works to download  (on disk: %d  no image: %d  not public: %d%s)",
             len(artworks),
             stats["skipped_exists"],
             stats["skipped_no_image"],
             stats["skipped_not_public"],
+            extras,
         )
 
         downloaded = 0
