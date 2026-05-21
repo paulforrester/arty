@@ -14,7 +14,8 @@ annotations.
 ```bash
 python3 fetch_artic.py                                           # download
 python3 process_collection.py [--input DIR] [--output DIR] \
-        [--override-frame STYLE] [--override-mat CONFIG] [--force]   # process
+        [--override-frame STYLE] [--override-mat CONFIG] \
+        [--no-mat] [--force]                                     # process
 python3 wood_texture.py [outdir]   # save 4 PNG samples for visual inspection
 ```
 
@@ -86,14 +87,15 @@ C\* > 20 (saturated), cluster size 1–25% (present but not dominant).
 5. brightness < 0.35 → override dark frames → `painted_cream` (< 0.2) or `oak`
 6. contrast > 0.6 → force `single_neutral` mat
 7. Default → `walnut`, `single_neutral`
+8. `mat`: `False` when `edge_brightness < 0.25` (very dark edges — mat would add unwanted lightness)
 
-`mat_accent_color`: first (highest-C\*) accent from analysis, +35 pp lightness,
-−20 pp saturation in HLS. Populated only for `double_accent`; `None` otherwise.
+`mat_accent_color`: first (highest-C\*) accent from analysis, +20 pp lightness,
+−10 pp saturation in HLS. Populated only for `double_accent`; `None` otherwise.
 
 **frame_compositor.py** — layout constants (pixels at 4K):
 ```python
 TV_W, TV_H = 3840, 2160
-FRAME_W    = 100        # frame rail width
+FRAME_W    = 160        # frame rail width
 MAT_W      = 70         # mat border around artwork
 BORDER_MIN = 80         # minimum black gap outside the frame
 LINER_W    = 18         # inner liner width for double-mat configs
@@ -111,10 +113,10 @@ They are independent implementations.
 1. Add a rendering entry to `wood_texture.STYLES`:
 ```python
 "ebony": {
-    "palette":     [...],   # list of (R,G,B) tuples, dark → light
-    "ring_freq":   12,      # higher = tighter ring spacing
-    "distortion":  2.0,     # warp amplitude applied to ring phase
-    "fine_weight": 0.18,    # blend fraction for fine-grain layer
+    "palette":    [...],   # list of (R,G,B) tuples, dark → light
+    "amp_fine":   0.12,    # amplitude of pore-scale FBM layer
+    "amp_mid":    0.20,    # amplitude of ring/growth-line FBM layer (dominant)
+    "amp_broad":  0.10,    # amplitude of slow cross-rail figure layer
 }
 ```
 
@@ -136,22 +138,25 @@ The style is then available via `--override-frame ebony`. To make
 ## Architecture notes
 
 **Pipeline per image** — `process_collection` runs three stages in sequence:
-1. `painting_analysis.analyse(artwork)` → perceptual colour dict
-2. `style_selector.select(analysis, meta)` → `{frame_style, mat_config, mat_accent_color}`
-3. `frame_compositor.compose(artwork, meta, frame_style=…, mat_config=…, mat_accent_color=…)`
+1. `painting_analysis.analyse(artwork)` → perceptual colour dict (`palette_temperature`, `accent_colors`, `brightness`, `contrast`, `edge_brightness`)
+2. `style_selector.select(analysis, meta)` → `{frame_style, mat_config, mat_accent_color, mat}`
+3. `frame_compositor.compose(artwork, meta, frame_style=…, mat_config=…, mat_accent_color=…, mat=…)`
 
 `frame_compositor.py` is the pure image-processing core (PIL Image in, PIL
 Image out; no file I/O, no CLI). `process_collection.py` is the thin CLI
 wrapper that handles discovery, loading, saving, skipping, and logging.
 `--override-frame` / `--override-mat` bypass stages 1–2 for that dimension.
+`--no-mat` forces `mat=False` regardless of the auto-detected value.
 
 **Wood texture pipeline** (`wood_texture.generate`):
-1. 5-octave FBM at large scale → warp field (bends ring bands)
-2. 3-octave FBM at fine scale → grain streaks
-3. `sin(primary * ring_freq * π + warp * distortion * π)` → ring pattern
-4. `primary` is Y for horizontal grain, X for vertical grain (rings stack
-   perpendicular to fibre direction)
-5. Palette interpolation maps [0,1] texture value through the style's colour stops
+Three anisotropic FBM layers are summed, each with features elongated ~10:1 along
+the grain direction (large `scale_par`) and fine across it (small `scale_perp`):
+- Layer 1 fine   (~fw/50 perp, ~fw/5 par,   amp_fine=0.12)  — pore-scale texture
+- Layer 2 medium (~fw/10 perp, ~fw par,     amp_mid=0.20)   — ring/growth-line variation
+- Layer 3 broad  (~fw/2  perp, ~fw×4 par,  amp_broad=0.10) — slow figure across the rail
+
+Layers are centred (mean → 0), weighted by amplitude, summed, and shifted back to 0.5.
+Palette interpolation maps [0,1] through the style's colour stops.
 
 **Frame corner miters** (`frame_compositor._draw_frame`):
 Each of the four rails is defined as a trapezoid polygon. The diagonals from
@@ -162,9 +167,11 @@ brightness profile is reversed for bottom and right rails so the outer
 
 **Info card** (`frame_compositor._info_card`):
 Rendered as a standalone PIL Image sized to fit its content (max 500 px wide).
-Font: Georgia 30 px (title), 22 px (artist, date). Pasted 8 px inside the
-lower-right corner of the mat; will overlap the artwork corner slightly for
-typical three-line cards at these font sizes.
+Font: Georgia 30 px (title), 22 px (artist, date).
+- mat mode (`dark_plaque=False`): cream card `(246,240,226)`, warm dark text; placed 8 px
+  from the inner-frame edges in the lower-right corner of the mat.
+- no-mat mode (`dark_plaque=True`): dark plaque `(30,22,12)`, warm light text; placed
+  12 px from the inner frame edge and 16 px from the bottom inner edge on the rail.
 
 **Seeding** — `process_collection._seed(stem)` = `md5(stem)[:8]` as a 31-bit
 int. Same filename always produces the same frame texture across re-runs.
@@ -180,6 +187,13 @@ by `style_selector`); `double_neutral` uses `secondary_color` from
 clipped to mat-only pixels via `ImageChops.multiply`. Simulates the artwork
 sitting slightly above the mat surface. Applied after the liner so the shadow
 falls naturally on both mat and liner.
+
+**No-mat mode** (`compose(mat=False)`): mat is omitted entirely; the artwork
+sits directly against the frame's inner edge. `_rabbet_shadow()` darkens the
+outermost 12 px of the artwork (0.55× at the edge, linear ramp to 1.0× at
+12 px depth) to simulate the rebate shadow. The info card becomes a dark plaque
+on the lower-right frame rail. `style_selector` sets `mat=False` automatically
+when `edge_brightness < 0.25`; `--no-mat` forces it from the CLI.
 
 ## There is no test suite
 

@@ -54,6 +54,7 @@ def process_one(
     out_path:       Path,
     override_frame: str | None = None,
     override_mat:   str | None = None,
+    no_mat:         bool = False,
 ) -> bool:
     try:
         artwork = Image.open(img_path)
@@ -78,8 +79,10 @@ def process_one(
     frame_style      = override_frame or chosen["frame_style"]
     mat_config       = override_mat   or chosen["mat_config"]
     mat_accent_color = chosen["mat_accent_color"]
+    use_mat          = False if no_mat else chosen.get("mat", True)
 
-    log.info("      style  frame=%-14s  mat=%s", frame_style, mat_config)
+    log.info("      style  frame=%-14s  mat=%-20s  use_mat=%s",
+             frame_style, mat_config, use_mat)
 
     try:
         result = frame_compositor.compose(
@@ -88,6 +91,7 @@ def process_one(
             mat_config=mat_config,
             mat_accent_color=mat_accent_color,
             seed=_seed(img_path.stem),
+            mat=use_mat,
         )
     except Exception as exc:
         log.error("Compositor failed for %s: %s", img_path.name, exc)
@@ -125,6 +129,11 @@ def main() -> None:
         metavar="CONFIG",
         choices=list(styles.MAT_CONFIGS),
         help="Force a specific mat config instead of the auto-selected one",
+    )
+    parser.add_argument(
+        "--no-mat",
+        action="store_true",
+        help="Omit the mat; artwork sits directly against the frame rail",
     )
     parser.add_argument(
         "--force", "-f",
@@ -182,7 +191,8 @@ def main() -> None:
 
         if process_one(img_path, meta_path, out_path,
                        override_frame=args.override_frame,
-                       override_mat=args.override_mat):
+                       override_mat=args.override_mat,
+                       no_mat=args.no_mat):
             log.info("      → %s", out_path)
             ok += 1
         else:

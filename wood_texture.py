@@ -30,10 +30,12 @@ STYLES = {
             (104, 58, 28),
             (130, 78, 44),
         ],
-        "ring_freq":    80,    # tight rings: ~1-2 px wide at 100 px rail
-        "distortion":   1.4,   # warp amplitude reduced for subtle grain
-        "fine_weight":  0.12,  # fibre-streak blend fraction
-        "pore_weight":  0.04,  # high-frequency pore detail blend fraction
+        # Three-layer anisotropic FBM grain amplitudes.
+        # Frequencies are cross-section-relative (see generate()); these control
+        # how much each layer contributes to the ±brightness variation.
+        "amp_fine":   0.12,   # pore-scale texture (~50× freq across grain)
+        "amp_mid":    0.20,   # ring / growth-line variation (~10× freq) — dominant
+        "amp_broad":  0.10,   # slow warmth / figure across the rail (~2.5× freq)
     },
     "oak": {
         "palette": [
@@ -43,24 +45,20 @@ STYLES = {
             (200, 162, 102),
             (218, 183, 128),
         ],
-        "ring_freq":    48,    # slightly wider rings than walnut
-        "distortion":   1.0,
-        "fine_weight":  0.17,
-        "pore_weight":  0.06,  # oak pores slightly more prominent
+        "amp_fine":   0.12,
+        "amp_mid":    0.20,
+        "amp_broad":  0.10,
     },
     "gilded": {
-        # Gold palette: shadow recess → base gold → catch-light
-        # NO ring_freq / distortion — rendered by _generate_gilded, not the grain path
+        # 3-stop palette: darkest shadow → mid antique gold → brightest highlight.
+        # Used by _generate_gilded() for standalone preview and by
+        # frame_compositor._apply_gilded_color() for the full framing pipeline.
+        # NO ring_freq / distortion — gilded_base() generates the surface map.
         "palette": [
-            (120,  85, 20),   # shadow recess
-            (165, 125, 38),   # shadow face
-            (205, 162, 55),   # base gold (mid-tone)
-            (235, 195, 95),   # illuminated face
-            (255, 240, 160),  # catch-light
+            ( 80,  55,  12),   # value 0.0 — deep shadow warm brown
+            (162, 122,  42),   # value 0.5 — mid antique gold
+            (220, 185,  95),   # value 1.0 — bright yellow-gold
         ],
-        "leaf_noise":  8,     # ±brightness units of random leaf variation (0–255)
-        "fleck_rate":  0.04,  # fraction of pixels darkened to simulate worn gilding
-        "fleck_depth": 0.14,  # maximum darkening for age flecks (fraction of 1.0)
     },
 }
 
@@ -111,32 +109,111 @@ def _fbm(shape: tuple, base_scale: int, octaves: int = 4,
     return total / norm
 
 
+def _smooth_noise_xy(
+    shape: tuple, scale_x: int, scale_y: int, seed: int
+) -> np.ndarray:
+    """
+    Value noise with independent x and y grid scales, bilinearly interpolated.
+    scale_x / scale_y are the pixel periods of the coarse grid in each axis.
+    """
+    h, w   = shape
+    ch     = max(2, h // scale_y + 2)
+    cw     = max(2, w // scale_x + 2)
+    coarse = np.random.default_rng(seed).random((ch, cw)).astype(np.float32)
+
+    yc = np.linspace(0.0, ch - 1, h)
+    xc = np.linspace(0.0, cw - 1, w)
+    y0 = np.floor(yc).astype(np.int32)
+    y1 = np.minimum(y0 + 1, ch - 1)
+    x0 = np.floor(xc).astype(np.int32)
+    x1 = np.minimum(x0 + 1, cw - 1)
+
+    fy = (yc - y0).astype(np.float32)
+    fx = (xc - x0).astype(np.float32)
+    fy = fy * fy * (3.0 - 2.0 * fy)
+    fx = fx * fx * (3.0 - 2.0 * fx)
+    fy = fy[:, np.newaxis]
+    fx = fx[np.newaxis, :]
+
+    return (coarse[np.ix_(y0, x0)] * (1 - fy) * (1 - fx)
+            + coarse[np.ix_(y1, x0)] * fy       * (1 - fx)
+            + coarse[np.ix_(y0, x1)] * (1 - fy) * fx
+            + coarse[np.ix_(y1, x1)] * fy       * fx)
+
+
+def _fbm_aniso(
+    shape: tuple,
+    scale_perp: int,
+    scale_par: int,
+    grain_direction: str,
+    octaves: int = 3,
+    persistence: float = 0.5,
+    seed: int = 0,
+) -> np.ndarray:
+    """
+    Anisotropic FBM: features are strongly elongated along the grain direction
+    (large scale_par) and fine across it (small scale_perp).
+      horizontal grain → scale_par governs X (along), scale_perp governs Y (across)
+      vertical   grain → scale_par governs Y (along), scale_perp governs X (across)
+    Returns a float32 array in [0, 1] with mean ≈ 0.5.
+    """
+    total = np.zeros(shape, dtype=np.float32)
+    amp, norm = 1.0, 0.0
+    for i in range(octaves):
+        sp = max(2, scale_perp >> i)
+        sa = max(2, scale_par  >> i)
+        if grain_direction == "horizontal":
+            layer = _smooth_noise_xy(shape, scale_x=sa, scale_y=sp, seed=seed + i * 997)
+        else:
+            layer = _smooth_noise_xy(shape, scale_x=sp, scale_y=sa, seed=seed + i * 997)
+        total += amp * layer
+        norm  += amp
+        amp   *= persistence
+    return total / norm
+
+
 # ---------------------------------------------------------------------------
 # Gilded texture
 # ---------------------------------------------------------------------------
 
+def gilded_base(width: int, height: int, seed: int = 42) -> np.ndarray:
+    """
+    Base value map for gilded rail texture: a flat 0.5 field with subtle
+    diagonal streaks (≈15°, period 12 px, ±0.015) simulating brush marks
+    in the gesso beneath the gold leaf.
+
+    Returns a float32 (height, width) array.  The streak pattern is purely
+    geometric (position-driven, not random); seed is accepted only for API
+    consistency.  frame_compositor._apply_gilded_color() applies the molding
+    profile, tapered noise, shadow flecks, and 3-stop colour ramp on top.
+    """
+    Y = np.arange(height, dtype=np.float32)[:, np.newaxis]
+    X = np.arange(width,  dtype=np.float32)[np.newaxis, :]
+    angle  = 15.0 * np.pi / 180.0
+    stripe = X * np.cos(angle) + Y * np.sin(angle)
+    return (np.full((height, width), 0.5, dtype=np.float32)
+            + np.sin(stripe * (2.0 * np.pi / 12.0)).astype(np.float32) * 0.015)
+
+
 def _generate_gilded(width: int, height: int, seed: int) -> Image.Image:
     """
-    Gold leaf texture: flat mid-gold base with subtle random variation and
-    scattered age flecks.  No ring pattern — bevel shading in frame_compositor
-    provides all the depth and faceting.
+    Standalone gold-leaf preview used by generate() and the __main__ path.
+    Flat (no molding profile) — for texture inspection only.
+    Full quality comes from gilded_base() + frame_compositor._apply_gilded_color().
     """
-    cfg = STYLES["gilded"]
-    rng = np.random.default_rng(seed)
-
-    # Base colour: solid mid-gold (palette index 2) with ±leaf_noise variation
-    base  = np.array(cfg["palette"][2], dtype=np.float32) / 255.0
-    noise = rng.integers(-cfg["leaf_noise"], cfg["leaf_noise"] + 1,
-                         (height, width, 3), dtype=np.int16).astype(np.float32) / 255.0
-    canvas = np.broadcast_to(base, (height, width, 3)).copy() + noise
-
-    # Scattered age flecks: slightly darkened pixels simulating worn gilding
-    fleck_mask = rng.random((height, width)) < cfg["fleck_rate"]
-    if fleck_mask.any():
-        depths = rng.uniform(0.05, cfg["fleck_depth"], (height, width)) * fleck_mask
-        canvas -= depths[:, :, np.newaxis]
-
-    return Image.fromarray((np.clip(canvas, 0.0, 1.0) * 255.0).astype(np.uint8), "RGB")
+    rng     = np.random.default_rng(seed)
+    val     = np.clip(
+        gilded_base(width, height, seed)
+        + rng.uniform(-12.0 / 255.0, 12.0 / 255.0, (height, width)).astype(np.float32),
+        0.0, 1.0,
+    )
+    palette = np.array(STYLES["gilded"]["palette"], dtype=np.float32) / 255.0
+    n       = len(palette)
+    t       = val * (n - 1)
+    lo      = np.clip(np.floor(t).astype(np.int32), 0, n - 2)
+    frac    = (t - lo)[..., np.newaxis]
+    rgb     = palette[lo] * (1.0 - frac) + palette[lo + 1] * frac
+    return Image.fromarray((np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8), "RGB")
 
 
 # ---------------------------------------------------------------------------
@@ -168,39 +245,33 @@ def generate(
 
     cfg   = STYLES[style]
     shape = (height, width)
-    dim   = max(width, height)
+    # Cross-section dimension sets grain frequencies (the rail is fw px wide).
+    fw = height if grain_direction == "horizontal" else width
 
-    # Large-scale warp bends and distorts the ring bands
-    warp = _fbm(shape, base_scale=max(8, dim // 4),
-                octaves=5, persistence=0.55, seed=seed)
+    # Three anisotropic FBM layers; features are elongated ~10:1 along the grain
+    # so the texture reads as continuous flowing material, not periodic stripes.
+    #
+    #   Layer 1 fine   ~50× freq  amplitude amp_fine   — pore-scale texture
+    #   Layer 2 medium ~10× freq  amplitude amp_mid    — ring/growth-line variation
+    #   Layer 3 broad  ~2.5× freq amplitude amp_broad  — slow figure across the rail
+    layers = [
+        (_fbm_aniso(shape, max(2, fw // 50), max(2, fw // 5),
+                    grain_direction, octaves=2, seed=seed),
+         cfg["amp_fine"]),
+        (_fbm_aniso(shape, max(2, fw // 10), max(2, fw),
+                    grain_direction, octaves=3, seed=seed + 1111),
+         cfg["amp_mid"]),
+        (_fbm_aniso(shape, max(2, fw //  2), max(2, fw * 4),
+                    grain_direction, octaves=2, seed=seed + 2222),
+         cfg["amp_broad"]),
+    ]
 
-    # Fine grain: high-frequency streaks along the fibres
-    fine_base = max(2, min(16, dim // 20))
-    fine = _fbm(shape, base_scale=fine_base,
-                octaves=3, persistence=0.65, seed=seed + 7777)
-
-    # Pore layer: 3× the fine grain frequency, simulates fine wood pores
-    pore = _fbm(shape, base_scale=max(2, fine_base // 3),
-                octaves=2, persistence=0.50, seed=seed + 3333)
-
-    x_lin = np.linspace(0.0, 1.0, width,  dtype=np.float32)
-    y_lin = np.linspace(0.0, 1.0, height, dtype=np.float32)
-    X, Y  = np.meshgrid(x_lin, y_lin)
-
-    # Ring pattern varies perpendicular to the grain direction:
-    #   horizontal grain → rings stack top-to-bottom → driven by Y
-    #   vertical   grain → rings stack left-to-right → driven by X
-    primary = Y if grain_direction == "horizontal" else X
-
-    rings = np.sin(primary * cfg["ring_freq"] * np.pi
-                   + warp  * cfg["distortion"] * np.pi)
-    rings = (rings + 1.0) * 0.5  # [0, 1]
-
-    pw      = cfg["pore_weight"]
-    texture = (rings * (1.0 - cfg["fine_weight"] - pw)
-               + fine  * cfg["fine_weight"]
-               + pore  * pw)
-    texture = np.clip(texture, 0.0, 1.0)
+    # Sum centred layers (mean → 0) then shift back to 0.5.
+    # Total worst-case range: ±(amp_fine + amp_mid + amp_broad) = ±0.42 → ≈ ±25 palette units.
+    texture = np.clip(
+        sum((lyr - 0.5) * amp for lyr, amp in layers) + 0.5,
+        0.0, 1.0,
+    )
 
     # Palette interpolation
     palette = np.array(cfg["palette"], dtype=np.float32) / 255.0

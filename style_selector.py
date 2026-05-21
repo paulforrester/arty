@@ -119,10 +119,15 @@ def select(analysis: dict, meta: dict) -> dict:
         mat_accent_color = _mat_accent(accents[0])
         log.info("      accent %s", mat_accent_color)
 
+    # Omit the mat when the painting's edge region is very dark — a mat would
+    # just add unwanted lightness around an already-dark border.
+    use_mat = analysis.get("edge_brightness", 1.0) >= 0.25
+
     return {
         "frame_style":      frame_style,
         "mat_config":       mat_config,
         "mat_accent_color": mat_accent_color,
+        "mat":              use_mat,
     }
 
 

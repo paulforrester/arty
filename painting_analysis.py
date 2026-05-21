@@ -167,6 +167,17 @@ def analyse(image: Image.Image) -> dict:
     # contrast: std of luminance; theoretical max std for L* ∈ [0,100] is 50
     contrast = float(np.clip(np.std(lab[:, 0]) / 50.0, 0.0, 1.0))
 
+    # edge_brightness: mean luminance of the outer 10 % border — used by
+    # style_selector to decide whether a mat would add unwanted lightness
+    ph, pw  = pixels.shape[:2]
+    e_h, e_w = max(1, ph // 10), max(1, pw // 10)
+    edge_m  = np.zeros((ph, pw), dtype=bool)
+    edge_m[:e_h, :]  = True
+    edge_m[-e_h:, :] = True
+    edge_m[:, :e_w]  = True
+    edge_m[:, -e_w:] = True
+    edge_brightness = float(np.clip(np.mean(lab[edge_m.ravel(), 0]) / 100.0, 0.0, 1.0))
+
     # --- palette_temperature -------------------------------------------------
     # cos(hue_radians) maps red→+1, cyan→−1, yellow→+0.5, blue→−0.5.
     # Weight by saturation so achromatic pixels contribute nothing.
@@ -217,9 +228,10 @@ def analyse(image: Image.Image) -> dict:
 
     return {
         "palette_temperature": round(palette_temperature, 3),
-        "accent_colors": accent_colors,
-        "brightness":    round(brightness, 3),
-        "contrast":      round(contrast, 3),
+        "accent_colors":       accent_colors,
+        "brightness":          round(brightness, 3),
+        "contrast":            round(contrast, 3),
+        "edge_brightness":     round(edge_brightness, 3),
     }
 
 

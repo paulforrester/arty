@@ -77,6 +77,7 @@ python3 process_collection.py [--input DIR] [--output DIR] \
 | `--output` / `-o`    | `/Users/paulf/arty/processed` | Output directory |
 | `--override-frame`   | auto | Force a specific frame style (key from `styles.FRAME_STYLES`) |
 | `--override-mat`     | auto | Force a specific mat config (key from `styles.MAT_CONFIGS`) |
+| `--no-mat`           | off  | Omit the mat; artwork sits directly against the frame |
 | `--force`  / `-f`    | off  | Re-process existing outputs |
 
 Each image is analysed for colour temperature, brightness, and contrast;
@@ -102,6 +103,7 @@ Prints a JSON dict of perceptual colour properties:
 | `accent_colors` | list of RGB tuples | Up to 3 vivid, mid-tone colours not dominant in the image |
 | `brightness` | 0.0 … 1.0 | Perceptual average luminance |
 | `contrast` | 0.0 … 1.0 | Standard deviation of luminance |
+| `edge_brightness` | 0.0 … 1.0 | Mean luminance of the outermost 10 % border pixels |
 
 Useful for picking mat colours and understanding a painting's mood before compositing.
 
@@ -117,14 +119,17 @@ Prints the frame and mat styles that would be chosen for an image:
 {
   "frame_style": "gilded",
   "mat_config": "double_accent",
-  "mat_accent_color": [223, 197, 186]
+  "mat_accent_color": [223, 197, 186],
+  "mat": true
 }
 ```
 
 `frame_style` is a key from `styles.FRAME_STYLES`; `mat_config` is a key from
 `styles.MAT_CONFIGS`. `mat_accent_color` is the most vivid accent colour from
-the painting, lightened 35% and desaturated 20% for mat use, or `null` if the
-painting has no suitable accent or the mat config doesn't use one.
+the painting, lightened 20 pp and desaturated 10 pp (HLS) for mat use, or `null`
+if the painting has no suitable accent or the mat config doesn't use one.
+`mat` is `false` when the painting's edge region is very dark (`edge_brightness < 0.25`);
+pass `--no-mat` to force it off regardless.
 
 ### 5 — Inspect wood textures
 
@@ -142,7 +147,7 @@ Saves four 400×400 PNG samples (walnut/oak × horizontal/vertical grain) to
 ```
 ┌─────────────────────────────────────────────────────────┐  ← near-black (#111111)
 │  ┌───────────────────────────────────────────────────┐  │
-│  │  wood frame rail  (100 px, mitered 45° corners)   │  │
+│  │  wood frame rail  (160 px, mitered 45° corners)   │  │
 │  │  ┌─────────────────────────────────────────────┐  │  │
 │  │  │  warm off-white mat  (70 px)                │  │  │
 │  │  │  ┌───────────────────────────────────────┐  │  │  │
@@ -161,15 +166,14 @@ Saves four 400×400 PNG samples (walnut/oak × horizontal/vertical grain) to
 
 **Wood texture** — `wood_texture.py`
 
-Grain is synthesised from two layered fractional Brownian motion passes, each
-built from bilinearly-interpolated value noise: a 5-octave large-scale warp
-that bends the annual-ring bands, and a 3-octave fine-grain layer that adds
-fibre streaks. Ring bands run perpendicular to the grain direction so
-horizontal rails show horizontal banding and vertical rails show vertical
-banding. Two styles are supported:
+Grain is synthesised from three anisotropic fractional Brownian motion layers,
+each built from bilinearly-interpolated value noise with independent x/y grid
+scales so features are elongated ~10:1 along the grain direction.  The three
+layers capture pore-scale texture, ring/growth-line variation, and slow
+cross-rail figure.  Two styles are supported:
 
-- **walnut** — dark heartwood palette, tight rings, low fibre weight
-- **oak** — golden-tan palette, wider rings, more visible fibre
+- **walnut** — dark heartwood palette, tighter rings
+- **oak** — golden-tan palette, wider rings
 
 **Molding profile** — simulated with a 1-D brightness curve applied across
 each rail's cross-section: sharp outer highlight → broad bevel gradient →

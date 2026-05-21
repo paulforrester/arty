@@ -29,13 +29,20 @@ import styles
 # ---------------------------------------------------------------------------
 
 TV_W, TV_H = 3840, 2160
-FRAME_W    = 100          # frame rail width
+FRAME_W    = 160          # frame rail width
 MAT_W      = 70           # mat border around artwork
 BORDER_MIN = 80           # minimum black gap outside the frame
 LINER_W    = 18           # inner liner width for double-mat configs
 
 BG_COLOR  = (17, 17, 17)      # near-black canvas
 MAT_COLOR = (240, 234, 220)   # warm off-white mat
+
+# 3-stop gold colour ramp shared by _apply_gilded_color() and wood_texture.STYLES
+_GILDED_PALETTE = np.array([
+    [ 80,  55,  12],   # value 0.0 — deep shadow warm brown
+    [162, 122,  42],   # value 0.5 — mid antique gold
+    [220, 185,  95],   # value 1.0 — bright yellow-gold
+], dtype=np.float32) / 255.0
 
 
 # ---------------------------------------------------------------------------
@@ -45,18 +52,42 @@ MAT_COLOR = (240, 234, 220)   # warm off-white mat
 def _molding_profile(n: int) -> np.ndarray:
     """
     1-D brightness offset across a frame rail (outer edge = index 0,
-    inner edge = index n−1).  Produces a raised-bevel illusion:
-      • sharp highlight at the outer edge
-      • broad gradient across the bevel face
-      • shadow trough near the inner edge
-      • thin bright bead at the innermost edge
+    inner edge = index n−1).  Piecewise-linear approximation of carved
+    impressionist-era frame molding with distinct faceted planes:
+
+      Zone 1  0–12 %   outer flat   — modest positive offset, nearly flat
+      Zone 2 12–18 %   outer step   — sharp drop (vertical face in shadow)
+      Zone 3 18–53 %   broad cove   — brightness rises across the main face
+      Zone 4 53–68 %   sight edge   — near-peak, flat (most directly lit)
+      Zone 5 68–76 %   inner step   — sharp drop (vertical face in shadow)
+      Zone 6 76–97 %   inner rabbet — darkest zone
+              97–100%  inner bead   — subtle catch-light at the inner edge
+
+    Transitions at Zone 2 and Zone 5 are ~1.5 px wide to preserve the
+    faceted look.  The outer-edge catch-light is added per-rail in
+    _draw_frame() at strengths appropriate for the light-source direction.
     """
-    x        = np.linspace(0.0, 1.0, n, dtype=np.float32)
-    outer_hi = 0.72 * np.exp(-x * 14)
-    bevel    = 0.22 * (1.0 - x)
-    shadow   = -0.42 * np.clip((x - 0.38) / 0.52, 0.0, 1.0) ** 1.5
-    bead     =  0.52 * np.exp(-(1.0 - x) * 22)
-    return outer_hi + bevel + shadow + bead
+    x   = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    eps = 1.5 / n  # ~1.5-pixel transition for sharp zone boundaries
+
+    xp = [
+        0.00,        0.12,        # Zone 1  (outer flat)
+        0.12 + eps,  0.18,        # Zone 2  (outer step — sharp drop)
+        0.53,                     # Zone 3→4 (cove peak / sight edge start)
+        0.68,                     # Zone 4→5 (sight edge end)
+        0.68 + eps,  0.76,        # Zone 5  (inner step — sharp drop)
+        0.97,        1.00,        # Zone 6 + inner bead
+    ]
+    fp = [
+        0.08,   0.06,             # Zone 1
+       -0.10,  -0.10,             # Zone 2
+        0.28,                     # Zone 3→4
+        0.28,                     # Zone 4→5
+       -0.24,  -0.26,             # Zone 5
+       -0.28,   0.10,             # Zone 6 + bead
+    ]
+
+    return np.interp(x, xp, fp).astype(np.float32)
 
 
 def _gilded_molding_profile(n: int) -> np.ndarray:
@@ -89,16 +120,64 @@ def _apply_lighting(
     arr: np.ndarray,
     profile: np.ndarray,
     axis: int,
+    ambient: float | np.ndarray = 0.0,
 ) -> np.ndarray:
     """
     Broadcast *profile* over the cross-section axis of *arr* (H×W×3).
     axis=0  profile varies row-by-row   → top / bottom rails
     axis=1  profile varies column-by-column → left / right rails
+    *ambient* may be a scalar or (H,W) float array for smooth corner blending.
     """
     f     = arr.astype(np.float32) / 255.0
     light = (profile[:, np.newaxis, np.newaxis] if axis == 0
              else profile[np.newaxis, :, np.newaxis])
-    return (np.clip(f + light, 0.0, 1.0) * 255).astype(np.uint8)
+    a = ambient[:, :, np.newaxis] if isinstance(ambient, np.ndarray) else float(ambient)
+    return (np.clip(f + light + a, 0.0, 1.0) * 255).astype(np.uint8)
+
+
+def _apply_gilded_color(
+    base: np.ndarray,
+    profile: np.ndarray,
+    axis: int,
+    ambient: np.ndarray,
+    rng_seed: int = 42,
+) -> np.ndarray:
+    """
+    Gilded rail renderer: applies profile + ambient to *base* (the float32
+    value map from wood_texture.gilded_base), then maps through the 3-stop
+    gold colour ramp (_GILDED_PALETTE).
+
+    Effects applied in value space before colour mapping:
+      • tapered noise   ±12/255 at midtones, tapering to ±4/255 at extremes
+      • shadow flecks   ~4 % of pixels with val < 0.25 receive a ≈ +0.14
+                        lift, simulating gold-leaf-edge catch-lights in the
+                        shadow recesses
+    """
+    rng = np.random.default_rng(rng_seed)
+
+    light = profile[:, np.newaxis] if axis == 0 else profile[np.newaxis, :]
+    val   = np.clip(base + light + ambient, 0.0, 1.0)
+
+    # Tapered noise: ±12 at midtone, ±4 at extremes (units out of 255)
+    amp   = (4.0 + 8.0 * (1.0 - np.abs(val * 2.0 - 1.0))) / 255.0
+    val   = np.clip(val + rng.uniform(-1.0, 1.0, val.shape).astype(np.float32) * amp,
+                    0.0, 1.0)
+
+    # Shadow flecks: ~4 % of deep-shadow pixels brightened to simulate
+    # gold-leaf edges catching light inside the recessed zones
+    shadow = val < 0.25
+    if shadow.any():
+        fleck = shadow & (rng.random(val.shape) < 0.04)
+        val[fleck] = np.minimum(val[fleck] + 0.14, 0.32)
+
+    # 3-stop colour ramp: re-scale val to [0, 2] to index two palette segments
+    t    = val * 2.0
+    lo   = np.clip(np.floor(t).astype(np.int32), 0, 1)
+    hi   = np.minimum(lo + 1, 2)
+    frac = (t - lo)[..., np.newaxis]
+    rgb  = _GILDED_PALETTE[lo] * (1.0 - frac) + _GILDED_PALETTE[hi] * frac
+
+    return (np.clip(rgb, 0.0, 1.0) * 255).astype(np.uint8)
 
 
 # ---------------------------------------------------------------------------
@@ -130,44 +209,90 @@ def _draw_frame(
     ibl = (fx + fw,       fy + foh - fw)
     ibr = (fx + fow - fw, fy + foh - fw)
 
-    if wood_style == "gilded":
-        # Faceted gilt molding; upper-left light source makes top/left brighter
-        p = _gilded_molding_profile(fw)
-        rails = [
-            ([tl,  tr,  itr, itl], "horizontal", p        + 0.08),  # top  — lit
-            ([ibl, ibr, br,  bl],  "horizontal", p[::-1]  - 0.08),  # bottom — shadow
-            ([tl,  itl, ibl, bl],  "vertical",   p        + 0.05),  # left — lit
-            ([itr, tr,  br,  ibr], "vertical",   p[::-1]  - 0.05),  # right — shadow
-        ]
-    else:
-        p = _molding_profile(fw)
-        rails = [
-            ([tl,  tr,  itr, itl], "horizontal", p),
-            ([ibl, ibr, br,  bl],  "horizontal", p[::-1]),
-            ([tl,  itl, ibl, bl],  "vertical",   p),
-            ([itr, tr,  br,  ibr], "vertical",   p[::-1]),
-        ]
+    p = _gilded_molding_profile(fw) if wood_style == "gilded" else _molding_profile(fw)
 
-    for poly, direction, prof in rails:
-        xs  = [p[0] for p in poly]
-        ys  = [p[1] for p in poly]
+    if wood_style != "gilded":
+        # Outer-edge catch-light scaled by rail orientation under overhead lighting.
+        # Gilded uses its own catch_light component so we leave that path untouched.
+        x_hi     = np.linspace(0.0, 1.0, fw, dtype=np.float32)
+        outer_hi = 0.72 * np.exp(-x_hi * 14)
+        p_top    = p        + outer_hi               # full catch-light — faces light source
+        p_left   = p        + 0.30 * outer_hi        # 30% — oblique angle
+        p_right  = p[::-1]  + 0.10 * outer_hi[::-1] # 10% — turned away
+        p_bottom = p[::-1]  - 0.12 * outer_hi[::-1] # slight deepen — in shadow
+    else:
+        p_top    = p
+        p_left   = p
+        p_right  = p[::-1]
+        p_bottom = p[::-1]
+
+    rails = [
+        ([tl,  tr,  itr, itl], "horizontal", p_top),
+        ([ibl, ibr, br,  bl],  "horizontal", p_bottom),
+        ([tl,  itl, ibl, bl],  "vertical",   p_left),
+        ([itr, tr,  br,  ibr], "vertical",   p_right),
+    ]
+
+    # 2D ambient gradient — upper-left overhead light source.
+    # Vertical:   +0.08 at top  → −0.08 at bottom.
+    # Horizontal: +0.05 at left → −0.05 at right.
+    # Summed as separable components so miter corners blend without a hard cut.
+    y_amb  = np.linspace( 0.08, -0.08, foh, dtype=np.float32)
+    x_amb  = np.linspace( 0.05, -0.05, fow, dtype=np.float32)
+    amb_2d = y_amb[:, np.newaxis] + x_amb[np.newaxis, :]   # (foh, fow)
+
+    for rail_idx, (poly, direction, prof) in enumerate(rails):
+        xs  = [pt[0] for pt in poly]
+        ys  = [pt[1] for pt in poly]
         bx0 = min(xs);  bx1 = max(xs)
         by0 = min(ys);  by1 = max(ys)
         bw, bh = bx1 - bx0, by1 - by0
 
-        wood = wood_texture.generate(
-            bw, bh, style=wood_style, grain_direction=direction, seed=seed
-        )
-        lit  = _apply_lighting(
-            np.array(wood), prof,
-            axis=0 if direction == "horizontal" else 1,
-        )
-        rail = Image.fromarray(lit)
+        rail_amb = amb_2d[by0 - fy : by0 - fy + bh, bx0 - fx : bx0 - fx + bw]
+        ax       = 0 if direction == "horizontal" else 1
 
-        local_poly = [(x - bx0, y - by0) for x, y in poly]
+        if wood_style == "gilded":
+            base = wood_texture.gilded_base(bw, bh, seed=seed)
+            lit  = _apply_gilded_color(
+                base, prof, axis=ax, ambient=rail_amb,
+                rng_seed=seed + rail_idx * 997,
+            )
+        else:
+            wood = wood_texture.generate(
+                bw, bh, style=wood_style, grain_direction=direction, seed=seed
+            )
+            lit  = _apply_lighting(np.array(wood), prof, axis=ax, ambient=rail_amb)
+
+        rail = Image.fromarray(lit)
+        local_poly = [(pt[0] - bx0, pt[1] - by0) for pt in poly]
         mask = Image.new("L", (bw, bh), 0)
         ImageDraw.Draw(mask).polygon(local_poly, fill=255)
         canvas.paste(rail, (bx0, by0), mask=mask)
+
+
+# ---------------------------------------------------------------------------
+# Rabbet shadow (no-mat mode)
+# ---------------------------------------------------------------------------
+
+def _rabbet_shadow(art: Image.Image, depth: int = 12) -> Image.Image:
+    """
+    Darken the outermost *depth* pixels of *art* on all four sides to
+    simulate the artwork sitting in a shallow frame rebate.
+    Factor: 0.55× at the very edge, linearly rising to 1.0× at *depth* px in.
+    """
+    arr  = np.array(art, dtype=np.float32) / 255.0
+    h, w = arr.shape[:2]
+    dy   = np.minimum(
+        np.arange(h, dtype=np.float32),
+        np.arange(h - 1, -1, -1, dtype=np.float32),
+    )
+    dx   = np.minimum(
+        np.arange(w, dtype=np.float32),
+        np.arange(w - 1, -1, -1, dtype=np.float32),
+    )
+    dist   = np.minimum(dy[:, np.newaxis], dx[np.newaxis, :])
+    factor = np.clip(0.55 + 0.45 * dist / depth, 0.55, 1.0)[:, :, np.newaxis]
+    return Image.fromarray((arr * factor * 255).clip(0, 255).astype(np.uint8))
 
 
 # ---------------------------------------------------------------------------
@@ -224,19 +349,18 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
         return ImageFont.load_default()
 
 
-def _info_card(meta: dict) -> Image.Image:
+def _info_card(meta: dict, *, dark_plaque: bool = False) -> Image.Image:
     """
-    Render a small cream card showing title, artist, and date.
+    Render a small info card showing title, artist, and date.
 
-    Sized to fit its content; the caller places it on the canvas.
+    dark_plaque=False  cream card for mat mode  (default)
+    dark_plaque=True   dark plaque for no-mat mode (card sits on frame rail)
     """
     raw_title  = meta.get("title")  or "Untitled"
     raw_artist = meta.get("artist") or ""
     raw_date   = meta.get("date")   or ""
 
-    # artist_display can be multi-line — use only the primary line
     artist = raw_artist.split("\n")[0].strip()
-    # Truncate long titles with ellipsis
     title  = raw_title[:46] + ("…" if len(raw_title) > 46 else "")
 
     f_title = _font(30)
@@ -250,7 +374,6 @@ def _info_card(meta: dict) -> Image.Image:
     if raw_date:
         lines.append((raw_date, f_sub))
 
-    # Measure on a throw-away canvas
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     widths  = [int(probe.textlength(t, font=f)) for t, f in lines]
     heights = [f.getbbox("Ag")[3] - f.getbbox("Ag")[1] for _, f in lines]
@@ -258,15 +381,25 @@ def _info_card(meta: dict) -> Image.Image:
     card_w = min(500, max(widths) + pad * 2)
     card_h = pad * 2 + sum(heights) + gap * (len(lines) - 1)
 
-    card = Image.new("RGB", (card_w, card_h), (246, 240, 226))
+    if dark_plaque:
+        bg_color     = (30,  22,  12)
+        title_color  = (220, 205, 175)
+        sub_color    = (170, 148, 112)
+        border_color = (55,  40,  22)
+    else:
+        bg_color     = (246, 240, 226)
+        title_color  = (28,  18,  10)
+        sub_color    = (70,  55,  38)
+        border_color = (168, 152, 132)
+
+    card = Image.new("RGB", (card_w, card_h), bg_color)
     draw = ImageDraw.Draw(card)
-    draw.rectangle([0, 0, card_w - 1, card_h - 1],
-                   outline=(168, 152, 132), width=1)
+    draw.rectangle([0, 0, card_w - 1, card_h - 1], outline=border_color, width=1)
 
     y = pad
     for i, (text, font) in enumerate(lines):
         draw.text((pad, y), text, font=font,
-                  fill=(28, 18, 10) if i == 0 else (70, 55, 38))
+                  fill=title_color if i == 0 else sub_color)
         y += heights[i] + gap
 
     return card
@@ -284,11 +417,11 @@ def compose(
     mat_config: str = "single_neutral",
     mat_accent_color: tuple[int, int, int] | None = None,
     seed: int = 42,
+    mat: bool = True,
 ) -> Image.Image:
     """
     Return a 3840×2160 PIL Image: *artwork* centered on a near-black
-    background, surrounded by a mat and a wood-grain frame with bevel
-    shading.  A small cream info card is placed in the lower-right corner.
+    background inside a wood-grain frame with bevel shading.
 
     Parameters
     ----------
@@ -300,28 +433,39 @@ def compose(
     mat_accent_color : pre-processed RGB tuple used as the inner liner on
                        double-accent mats; ignored for single-mat configs
     seed             : RNG seed; same seed always produces the same frame texture
+    mat              : when False the mat is omitted and the artwork sits directly
+                       against the frame; a rabbet shadow and dark plaque card
+                       are used instead
     """
     art = artwork.convert("RGB")
 
-    # Resize artwork to fit the available area, preserving aspect ratio
-    max_art_w = TV_W - 2 * (BORDER_MIN + FRAME_W + MAT_W)
-    max_art_h = TV_H - 2 * (BORDER_MIN + FRAME_W + MAT_W)
+    if mat:
+        max_art_w = TV_W - 2 * (BORDER_MIN + FRAME_W + MAT_W)
+        max_art_h = TV_H - 2 * (BORDER_MIN + FRAME_W + MAT_W)
+    else:
+        max_art_w = TV_W - 2 * (BORDER_MIN + FRAME_W)
+        max_art_h = TV_H - 2 * (BORDER_MIN + FRAME_W)
     art.thumbnail((max_art_w, max_art_h), Image.LANCZOS)
     art_w, art_h = art.size
 
-    # Derived dimensions
-    mat_w = art_w + 2 * MAT_W
-    mat_h = art_h + 2 * MAT_W
-    fow   = mat_w + 2 * FRAME_W   # frame outer width
-    foh   = mat_h + 2 * FRAME_W   # frame outer height
-
-    # Top-left origins on the 4K canvas
-    fx = (TV_W - fow) // 2
-    fy = (TV_H - foh) // 2
-    mx = fx + FRAME_W              # mat origin
-    my = fy + FRAME_W
-    ax = mx + MAT_W                # artwork origin
-    ay = my + MAT_W
+    if mat:
+        mat_w = art_w + 2 * MAT_W
+        mat_h = art_h + 2 * MAT_W
+        fow   = mat_w + 2 * FRAME_W
+        foh   = mat_h + 2 * FRAME_W
+        fx    = (TV_W - fow) // 2
+        fy    = (TV_H - foh) // 2
+        mx    = fx + FRAME_W
+        my    = fy + FRAME_W
+        ax    = mx + MAT_W
+        ay    = my + MAT_W
+    else:
+        fow = art_w + 2 * FRAME_W
+        foh = art_h + 2 * FRAME_W
+        fx  = (TV_W - fow) // 2
+        fy  = (TV_H - foh) // 2
+        ax  = fx + FRAME_W
+        ay  = fy + FRAME_W
 
     # Resolve wood style — fall back to walnut for styles not yet rendered
     _wood = styles.FRAME_STYLES.get(frame_style, styles.FRAME_STYLES["walnut"])["wood_style"]
@@ -329,33 +473,40 @@ def compose(
         _wood = "walnut"
 
     canvas = Image.new("RGB", (TV_W, TV_H), BG_COLOR)
-
     _draw_frame(canvas, fx, fy, fow, foh, _wood, seed)
 
-    # Determine inner liner colour for double-mat configs
-    _mat_cfg = styles.MAT_CONFIGS.get(mat_config, styles.MAT_CONFIGS["single_neutral"])
-    if _mat_cfg["layers"] == 2:
-        _liner = mat_accent_color if _mat_cfg["uses_accent"] else _mat_cfg.get("secondary_color")
-    else:
-        _liner = None
+    if mat:
+        _mat_cfg = styles.MAT_CONFIGS.get(mat_config, styles.MAT_CONFIGS["single_neutral"])
+        if _mat_cfg["layers"] == 2:
+            _liner = mat_accent_color if _mat_cfg["uses_accent"] else _mat_cfg.get("secondary_color")
+        else:
+            _liner = None
 
-    mat_img = Image.new("RGB", (mat_w, mat_h), MAT_COLOR)
-    if _liner is not None:
-        ImageDraw.Draw(mat_img).rectangle(
-            [MAT_W - LINER_W, MAT_W - LINER_W,
-             MAT_W + art_w + LINER_W - 1, MAT_W + art_h + LINER_W - 1],
-            fill=_liner,
-        )
-    art_on_mat = (MAT_W, MAT_W, MAT_W + art_w, MAT_W + art_h)
-    mat_img    = _mat_shadow(mat_img, art_on_mat)
-    canvas.paste(mat_img, (mx, my))
+        mat_img = Image.new("RGB", (mat_w, mat_h), MAT_COLOR)
+        if _liner is not None:
+            ImageDraw.Draw(mat_img).rectangle(
+                [MAT_W - LINER_W, MAT_W - LINER_W,
+                 MAT_W + art_w + LINER_W - 1, MAT_W + art_h + LINER_W - 1],
+                fill=_liner,
+            )
+        art_on_mat = (MAT_W, MAT_W, MAT_W + art_w, MAT_W + art_h)
+        mat_img    = _mat_shadow(mat_img, art_on_mat)
+        canvas.paste(mat_img, (mx, my))
+    else:
+        art = _rabbet_shadow(art)
 
     canvas.paste(art, (ax, ay))
 
-    # Info card — lower-right corner of the mat, 8 px from the frame inner edges
-    card   = _info_card(meta)
-    card_x = mx + mat_w - card.width  - 8
-    card_y = my + mat_h - card.height - 8
+    # Info card
+    card = _info_card(meta, dark_plaque=not mat)
+    if mat:
+        # Lower-right corner of the mat, 8 px from the frame inner edges
+        card_x = mx + mat_w - card.width  - 8
+        card_y = my + mat_h - card.height - 8
+    else:
+        # Lower-right corner of the frame rail, inset from the inner edge
+        card_x = fx + fow - FRAME_W - 12 - card.width
+        card_y = fy + foh - FRAME_W - 16 - card.height
     canvas.paste(card, (card_x, card_y))
 
     return canvas
