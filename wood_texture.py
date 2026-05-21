@@ -30,9 +30,10 @@ STYLES = {
             (104, 58, 28),
             (130, 78, 44),
         ],
-        "ring_freq":   10,
-        "distortion":  2.3,
-        "fine_weight": 0.20,
+        "ring_freq":    80,    # tight rings: ~1-2 px wide at 100 px rail
+        "distortion":   1.4,   # warp amplitude reduced for subtle grain
+        "fine_weight":  0.12,  # fibre-streak blend fraction
+        "pore_weight":  0.04,  # high-frequency pore detail blend fraction
     },
     "oak": {
         "palette": [
@@ -42,9 +43,10 @@ STYLES = {
             (200, 162, 102),
             (218, 183, 128),
         ],
-        "ring_freq":   6,
-        "distortion":  1.6,
-        "fine_weight": 0.28,
+        "ring_freq":    48,    # slightly wider rings than walnut
+        "distortion":   1.0,
+        "fine_weight":  0.17,
+        "pore_weight":  0.06,  # oak pores slightly more prominent
     },
 }
 
@@ -128,8 +130,13 @@ def generate(
                 octaves=5, persistence=0.55, seed=seed)
 
     # Fine grain: high-frequency streaks along the fibres
-    fine = _fbm(shape, base_scale=max(2, min(16, dim // 20)),
+    fine_base = max(2, min(16, dim // 20))
+    fine = _fbm(shape, base_scale=fine_base,
                 octaves=3, persistence=0.65, seed=seed + 7777)
+
+    # Pore layer: 3× the fine grain frequency, simulates fine wood pores
+    pore = _fbm(shape, base_scale=max(2, fine_base // 3),
+                octaves=2, persistence=0.50, seed=seed + 3333)
 
     x_lin = np.linspace(0.0, 1.0, width,  dtype=np.float32)
     y_lin = np.linspace(0.0, 1.0, height, dtype=np.float32)
@@ -144,7 +151,10 @@ def generate(
                    + warp  * cfg["distortion"] * np.pi)
     rings = (rings + 1.0) * 0.5  # [0, 1]
 
-    texture = rings * (1.0 - cfg["fine_weight"]) + fine * cfg["fine_weight"]
+    pw      = cfg["pore_weight"]
+    texture = (rings * (1.0 - cfg["fine_weight"] - pw)
+               + fine  * cfg["fine_weight"]
+               + pore  * pw)
     texture = np.clip(texture, 0.0, 1.0)
 
     # Palette interpolation
