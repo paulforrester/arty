@@ -1,4 +1,9 @@
+@~/development/dev-practices/branching.md
+@~/development/dev-practices/doc-conventions.md
+
 # arty — developer context
+
+**Version:** 1.0 — Last updated 2026-09-10
 
 ## What this project does
 
@@ -255,3 +260,9 @@ img  = Image.open("~/arty/artic/claude_monet/image/water_lilies_16568.jpg")
 meta = json.loads(open("~/arty/artic/claude_monet/meta/water_lilies_16568.json").read())
 frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 ```
+
+## Version History
+
+| Version | Date | Changes |
+|---|---|---|
+| 1.0 | 2026-09-10 | Initial version tracking for this file; added `~/development/dev-practices/branching.md` and `doc-conventions.md` imports so this project follows the same branching/merge and living-doc discipline as the rest of the ecosystem. |
