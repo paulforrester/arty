@@ -1,0 +1,11 @@
+# Favourite artists for fetch_artic.py (public-domain works from ARTIC):
+#   python3 fetch_artic.py --artists-file favorites.txt --limit 25
+# Names must match ARTIC's artist_title exactly.
+Claude Monet
+Pierre-Auguste Renoir
+Hilaire Germain Edgar Degas
+Paul Cézanne
+Vincent van Gogh
+Paul Gauguin
+Suzanne Valadon
+Édouard Manet
