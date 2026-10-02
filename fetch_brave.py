@@ -53,6 +53,7 @@ REPO_DIR       = Path(__file__).resolve().parent
 INBOX_DIR      = Path.home() / "arty" / "inbox"
 OUTPUT_DIR     = Path.home() / "arty" / "brave"
 LEDGER_PATH    = INBOX_DIR / ".seen.json"
+REJECTED_DIR   = INBOX_DIR / ".rejected"   # rejected in the review page (undo-able)
 KEY_FILE       = Path.home() / ".config" / "arty" / "brave_api_key"
 DEFAULT_ALLOW  = REPO_DIR / "brave_domains.txt"
 DEFAULT_SITES  = REPO_DIR / "brave_search_sites.txt"
@@ -394,7 +395,7 @@ def search_artist(name: str, query: str, args, key: str, allow: list[str],
 def write_review_page() -> Path:
     """A static contact sheet of everything waiting in the inbox."""
     sections = []
-    for artist_dir in sorted(p for p in INBOX_DIR.iterdir() if p.is_dir()):
+    for artist_dir in inbox_artist_dirs():
         cards = []
         for img_path in sorted(artist_dir.glob("*.jpg")):
             meta_path = img_path.with_suffix(".json")
@@ -426,8 +427,10 @@ figcaption{{margin-top:6px;line-height:1.4;word-break:break-word}}
 code{{color:#888;font-size:11px}}
 </style>
 <h1>arty inbox</h1>
-<p>Delete the files you don't want from the inbox folder (both the .jpg and its .json),
-fix any titles or dates in the .json files, then run
+<p>For keep/reject buttons and title editing, run
+<code>python3 fetch_brave.py review</code> instead of opening this file.
+Or delete the files you don't want from the inbox folder (both the .jpg and
+its .json), fix any titles or dates in the .json files, then run
 <code>python3 fetch_brave.py accept</code>.</p>
 {''.join(sections) or '<p>The inbox is empty.</p>'}
 """
@@ -499,54 +502,89 @@ def run_search(args) -> None:
 # Accept
 # ---------------------------------------------------------------------------
 
+def inbox_artist_dirs() -> list[Path]:
+    """Artist folders in the inbox, skipping hidden ones like .rejected."""
+    if not INBOX_DIR.exists():
+        return []
+    return sorted(p for p in INBOX_DIR.iterdir()
+                  if p.is_dir() and not p.name.startswith("."))
+
+
+def read_sidecar(img_path: Path) -> dict | None:
+    """The candidate's .json sidecar; {} if missing, None if unreadable."""
+    meta_path = img_path.with_suffix(".json")
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        log.warning("Bad JSON, skipped (fix and re-run): %s (%s)", meta_path, exc)
+        return None
+
+
+def accept_one(img_path: Path, side: dict) -> Path:
+    """Move one inbox candidate into OUTPUT_DIR; returns the new image path."""
+    with Image.open(img_path) as img:
+        w, h = img.size
+    artist_dir = img_path.parent
+    artist = side.get("artist") or artist_dir.name.replace("_", " ").title()
+    meta = {
+        "title":            side.get("title") or "Untitled",
+        "artist":           artist,
+        "date":             side.get("date") or "",
+        "styles":           side.get("styles", []),
+        "source":           "brave",
+        "source_page_url":  side.get("source_page_url"),
+        "source_image_url": side.get("source_image_url"),
+        "domain":           side.get("domain"),
+        "copyrighted":      side.get("copyrighted", True),
+        "private":          True,
+        "low_res":          max(w, h) < LOW_RES_PX,
+    }
+    dest_slug = slugify(artist)
+    dest_img = OUTPUT_DIR / dest_slug / "image" / img_path.name
+    dest_meta = OUTPUT_DIR / dest_slug / "meta" / f"{img_path.stem}.json"
+    dest_img.parent.mkdir(parents=True, exist_ok=True)
+    dest_meta.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(img_path), dest_img)
+    dest_meta.write_text(json.dumps(meta, indent=2, ensure_ascii=False),
+                         encoding="utf-8")
+    img_path.with_suffix(".json").unlink(missing_ok=True)
+    if not any(artist_dir.iterdir()):
+        artist_dir.rmdir()
+    log.info("Accepted %s / %s", dest_slug, img_path.stem)
+    return dest_img
+
+
+def accept_inbox(kept_only: bool = False) -> int:
+    """Accept every inbox candidate (or only those marked Keep). Returns count."""
+    moved = 0
+    for artist_dir in inbox_artist_dirs():
+        for img_path in sorted(artist_dir.glob("*.jpg")):
+            side = read_sidecar(img_path)
+            if side is None:
+                continue
+            if kept_only and side.get("review") != "keep":
+                continue
+            accept_one(img_path, side)
+            moved += 1
+    write_review_page()
+    return moved
+
+
 def run_accept(args) -> None:
     if not INBOX_DIR.exists():
         sys.exit(f"No inbox at {INBOX_DIR}")
-    moved = 0
-    for artist_dir in sorted(p for p in INBOX_DIR.iterdir() if p.is_dir()):
-        for img_path in sorted(artist_dir.glob("*.jpg")):
-            meta_path = img_path.with_suffix(".json")
-            side = {}
-            if meta_path.exists():
-                try:
-                    side = json.loads(meta_path.read_text(encoding="utf-8"))
-                except json.JSONDecodeError as exc:
-                    log.warning("Bad JSON, skipped (fix and re-run): %s (%s)",
-                                meta_path, exc)
-                    continue
-            with Image.open(img_path) as img:
-                w, h = img.size
-            artist = side.get("artist") or artist_dir.name.replace("_", " ").title()
-            meta = {
-                "title":            side.get("title") or "Untitled",
-                "artist":           artist,
-                "date":             side.get("date") or "",
-                "styles":           side.get("styles", []),
-                "source":           "brave",
-                "source_page_url":  side.get("source_page_url"),
-                "source_image_url": side.get("source_image_url"),
-                "domain":           side.get("domain"),
-                "copyrighted":      side.get("copyrighted", True),
-                "private":          True,
-                "low_res":          max(w, h) < LOW_RES_PX,
-            }
-            dest_slug = slugify(artist)
-            dest_img = OUTPUT_DIR / dest_slug / "image" / img_path.name
-            dest_meta = OUTPUT_DIR / dest_slug / "meta" / f"{img_path.stem}.json"
-            dest_img.parent.mkdir(parents=True, exist_ok=True)
-            dest_meta.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(img_path), dest_img)
-            dest_meta.write_text(json.dumps(meta, indent=2, ensure_ascii=False),
-                                 encoding="utf-8")
-            meta_path.unlink(missing_ok=True)
-            moved += 1
-            log.info("Accepted %s / %s", dest_slug, img_path.stem)
-        if artist_dir.exists() and not any(artist_dir.iterdir()):
-            artist_dir.rmdir()
-    write_review_page()
-    print(f"\nAccepted {moved} works into {OUTPUT_DIR}")
+    moved = accept_inbox(kept_only=args.kept_only)
+    which = "kept " if args.kept_only else ""
+    print(f"\nAccepted {moved} {which}works into {OUTPUT_DIR}")
     if moved:
         print(f"Next: python3 process_collection.py --input {OUTPUT_DIR}")
+
+
+def run_review(args) -> None:
+    import review_server
+    review_server.serve(port=args.port, open_browser=not args.no_browser)
 
 
 # ---------------------------------------------------------------------------
@@ -587,13 +625,18 @@ def main() -> None:
                    metavar="N", help="print the top N source sites (default 30; "
                                      "always shown with --dry-run)")
 
-    sub.add_parser("accept", help="move reviewed inbox candidates into ~/arty/brave")
+    a = sub.add_parser("accept", help="move reviewed inbox candidates into ~/arty/brave")
+    a.add_argument("--kept-only", action="store_true",
+                   help="only accept candidates marked Keep in the review page")
+
+    r = sub.add_parser("review", help="open the inbox in a browser with keep/reject "
+                                      "buttons and title editing")
+    r.add_argument("--port", type=int, default=8765, help="local port (default 8765)")
+    r.add_argument("--no-browser", action="store_true",
+                   help="don't open the browser automatically")
 
     args = p.parse_args()
-    if args.command == "search":
-        run_search(args)
-    else:
-        run_accept(args)
+    {"search": run_search, "accept": run_accept, "review": run_review}[args.command](args)
 
 
 if __name__ == "__main__":

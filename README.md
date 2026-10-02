@@ -12,6 +12,7 @@ presentations sized for a 4K TV (3840×2160).
 arty/
 ├── fetch_artic.py          # Download artwork + metadata from the ARTIC API
 ├── fetch_brave.py          # Find candidates via Brave image search, review, then accept
+├── review_server.py        # Local review page for the inbox (fetch_brave.py review)
 ├── brave_domains.txt       # Domain allowlist for fetch_brave.py
 ├── brave_search_sites.txt  # Sites searched one by one with fetch_brave.py --sites
 ├── modern_artists.txt      # Artist list for fetch_brave.py
@@ -110,12 +111,23 @@ mkdir -p ~/.config/arty && echo '...' > ~/.config/arty/brave_api_key
 ```bash
 python3 fetch_brave.py search --artist 'Joan Miró' --dry-run    # preview, downloads nothing
 python3 fetch_brave.py search --artists-file modern_artists.txt --sites   # candidates → ~/arty/inbox
-open ~/arty/inbox/review.html                                    # look them over
-#   delete unwanted .jpg + .json pairs from ~/arty/inbox/{artist}/
-#   fix "title" / "date" in the .json sidecars where the guess is wrong
-python3 fetch_brave.py accept                                    # → ~/arty/brave
+python3 fetch_brave.py review                                    # keep / reject / edit in the browser
 python3 process_collection.py --input ~/arty/brave
 ```
+
+**Review page** — `fetch_brave.py review` opens the inbox in your browser
+(served from this Mac only, at `http://127.0.0.1:8765`). Each candidate has
+**Keep** and **Reject** buttons and editable title and date fields that save as
+soon as you leave them. **Reject the rest** rejects everything in an artist not
+marked Keep, and **Accept kept** moves the kept works into `~/arty/brave`.
+Rejected files go to `~/arty/inbox/.rejected/` (Undo brings them back); they
+are never re-downloaded, so that folder can be emptied any time. Press Ctrl-C in
+the terminal when done.
+
+Without the review page: delete unwanted `.jpg` + `.json` pairs from
+`~/arty/inbox/{artist}/`, fix titles in the `.json` files, then run
+`python3 fetch_brave.py accept` (or `accept --kept-only` to take only works
+marked Keep).
 
 | Flag (search) | Default | Description |
 |------|---------|-------------|
