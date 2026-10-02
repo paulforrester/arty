@@ -55,6 +55,12 @@ sothebys.com
 phillips.com
 bonhams.com
 
+# Auction catalogues and dealers
+invaluable.com
+liveauctioneers.com
+bidsquare.com
+1stdibs.com
+
 # Galleries (Jim Buckels, Eyvind Earle)
 viningsgallery.com
 sapergalleries.com

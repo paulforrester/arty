@@ -55,6 +55,7 @@ OUTPUT_DIR     = Path.home() / "arty" / "brave"
 LEDGER_PATH    = INBOX_DIR / ".seen.json"
 KEY_FILE       = Path.home() / ".config" / "arty" / "brave_api_key"
 DEFAULT_ALLOW  = REPO_DIR / "brave_domains.txt"
+DEFAULT_SITES  = REPO_DIR / "brave_search_sites.txt"
 
 API_URL        = "https://api.search.brave.com/res/v1/images/search"
 REQUEST_DELAY  = 1.0          # seconds between HTTP requests
@@ -72,7 +73,13 @@ JUNK_WORDS = (
     "phone case", "iphone", "puzzle", "tote", "sticker", "mask", "socks",
     "blanket", "shower curtain", "doormat", "poster frame", "mockup",
     "wallpaper", "logo", "book cover", "exhibition view", "installation view",
+    "framed print", "art print", "canvas print", "poster", "hardcover",
+    "paperback", "jigsaw", "meet the artist", "gift card",
 )
+# Shop pages on otherwise trusted sites (e.g. MoMA Design Store)
+_SHOP_URL = re.compile(r"https?://(?:[\w-]+\.)*(?:store|shop)\.|/(?:shop|store|products?)/",
+                       re.IGNORECASE)
+_TITLE_ENDS_PRINT = re.compile(r"\bprints?\s*$", re.IGNORECASE)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -215,14 +222,17 @@ def guess_title_and_date(raw_title: str, artist: str, domain: str = "") -> tuple
     parts = re.split(r"(?<!\bc)(?<!\bca)\.\s", title, maxsplit=1)   # not 'c. 1952'
     if len(parts) == 2 and _YEAR.search(parts[1]) and len(parts[0]) >= 3:
         title = parts[0]
-    title = _YEAR.sub("", title)
+    title = _YEAR.sub("", title).replace("*", "")
     title = re.sub(r"\(\s*\)", "", title)
     title = re.sub(r"\s{2,}", " ", title).strip(" ,.-–—:|")
     return (title or "Untitled"), date
 
 
-def looks_like_junk(*texts: str) -> bool:
-    blob = " ".join(t.lower() for t in texts if t)
+def looks_like_junk(title: str, page_url: str = "", image_url: str = "") -> bool:
+    """Merchandise, books, posters, and shop pages — not the artwork itself."""
+    if _SHOP_URL.search(page_url or "") or _TITLE_ENDS_PRINT.search(title or ""):
+        return True
+    blob = " ".join(t.lower() for t in (title, page_url, image_url) if t)
     return any(re.search(rf"\b{re.escape(w)}\b", blob) for w in JUNK_WORDS)
 
 
@@ -294,9 +304,19 @@ def search_artist(name: str, query: str, args, key: str, allow: list[str],
     stats = {"artist": name, "results": 0, "seen": 0, "domain": 0, "junk": 0,
              "size": 0, "allowed": 0, "saved": 0, "domains": Counter(), "raw": []}
 
-    log.info("Searching Brave: %r", query)
-    results = [normalise_result(r) for r in brave_image_search(query, args.count, key)]
+    queries = [f"{query} site:{site}" for site in args.site_list] or [query]
+    results, seen_in_run = [], set()
+    for i, q in enumerate(queries):
+        if i:
+            time.sleep(REQUEST_DELAY)
+        log.info("Searching Brave: %r", q)
+        for r in map(normalise_result, brave_image_search(q, args.count, key)):
+            if r["image_url"] and r["image_url"] in seen_in_run:
+                continue                      # same image from two queries
+            seen_in_run.add(r["image_url"])
+            results.append(r)
     stats["results"] = len(results)
+    stats["searches"] = len(queries)
     stats["raw"] = results
 
     # Filter on what the search result already tells us, counting each reason
@@ -422,6 +442,16 @@ def run_search(args) -> None:
     else:
         artists = parse_artists_file(Path(args.artists_file).expanduser())
     allow = [] if args.any_domain else load_allowlist(Path(args.allow_file).expanduser())
+    args.site_list = (load_allowlist(Path(args.sites_file).expanduser())
+                      if args.sites else [])
+    off = [d for d in args.site_list if allow and not domain_allowed(d, allow)]
+    if off:
+        log.warning("Sites not on the allowlist (their results will be dropped): %s",
+                    ", ".join(off))
+    if args.site_list:
+        n = len(artists) * len(args.site_list)
+        log.info("Site search: %d artists × %d sites = %d searches",
+                 len(artists), len(args.site_list), n)
     key = load_api_key()
     ledger = load_ledger()
 
@@ -442,6 +472,8 @@ def run_search(args) -> None:
     print(f"{'Artist':<24}" + "".join(f"{h:>9}" for h, _ in cols))
     for s in all_stats:
         print(f"{s['artist'][:23]:<24}" + "".join(f"{s[k]:>9}" for _, k in cols))
+
+    print(f"\nBrave searches used: {sum(s['searches'] for s in all_stats)}")
 
     if args.dry_run or args.show_domains:
         totals = Counter()
@@ -541,6 +573,11 @@ def main() -> None:
                    help=f"minimum long edge in px (default {DEFAULT_MIN_PX})")
     s.add_argument("--allow-file", default=str(DEFAULT_ALLOW),
                    help="domain allowlist (default: brave_domains.txt in the repo)")
+    s.add_argument("--sites", action="store_true",
+                   help="search each artist on each site in the sites file "
+                        "(one search per artist per site)")
+    s.add_argument("--sites-file", default=str(DEFAULT_SITES),
+                   help="sites for --sites (default: brave_search_sites.txt)")
     s.add_argument("--any-domain", action="store_true",
                    help="ignore the allowlist (not recommended)")
     s.add_argument("--dry-run", action="store_true",
