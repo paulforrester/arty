@@ -1,9 +1,11 @@
-# Favourite artists for fetch_artic.py (public-domain works from ARTIC):
+# Favourite artists. Works with both fetchers:
 #   python3 fetch_artic.py --artists-file favorites.txt --limit 25
-# Names must match ARTIC's artist_title exactly.
+#   python3 fetch_brave.py search --artists-file favorites.txt --sites
+# Use the names people search for. fetch_artic.py falls back to a phrase match
+# when ARTIC's stored name differs (ARTIC has "Hilaire Germain Edgar Degas").
 Claude Monet
 Pierre-Auguste Renoir
-Hilaire Germain Edgar Degas
+Edgar Degas
 Paul Cézanne
 Vincent van Gogh
 Paul Gauguin

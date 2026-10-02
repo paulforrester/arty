@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.4 — Last updated 2026-10-02
+**Version:** 1.5 — Last updated 2026-10-02
 
 ## What this project does
 
@@ -39,7 +39,7 @@ Pillow 10+ is required (`ImageFont.load_default(size=…)` and `textlength`).
 
 ```
 fetch_artic.py          Download artwork + metadata from the ARTIC API
-favorites.txt           Artist list for fetch_artic.py --artists-file (ARTIC's exact names)
+favorites.txt           Artist list for fetch_artic.py and fetch_brave.py --artists-file
 fetch_brave.py          Brave image search → ~/arty/inbox (review) → accept → ~/arty/brave
 review_server.py        Local keep/reject/edit page for the inbox (fetch_brave.py review)
 brave_domains.txt       Domain allowlist for fetch_brave.py (one per line, subdomains match)
@@ -289,3 +289,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | 1.2 | 2026-10-02 | `fetch_brave.py --sites` (per-site `site:` searches from `brave_search_sites.txt`); shop-page and print/poster/book junk filtering; auction catalogue and dealer domains added to the allowlist. |
 | 1.3 | 2026-10-02 | `fetch_brave.py review` and `review_server.py`: local review page with Keep / Reject / Undo, inline title and date editing, Reject the rest, and Accept kept; `accept --kept-only`; accept logic refactored into `accept_one()` / `accept_inbox()`. |
 | 1.4 | 2026-10-02 | Added `favorites.txt` (Monet, Renoir, Degas, Cézanne, van Gogh, Gauguin, Valadon, Manet) for `fetch_artic.py --artists-file`; Degas is listed under ARTIC's name, Hilaire Germain Edgar Degas. |
+| 1.5 | 2026-10-02 | `favorites.txt` now serves both fetchers: Degas listed as "Edgar Degas" (ARTIC finds him through the phrase-match fallback; Brave searches need the common name). |
