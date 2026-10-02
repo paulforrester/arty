@@ -74,6 +74,7 @@ Edit the constants at the top of the file to change behaviour:
 ```bash
 python3 fetch_artic.py --artist 'Claude Monet' --limit 30
 python3 fetch_artic.py --artists-file impressionists.txt --limit 20
+python3 fetch_artic.py --artists-file favorites.txt --limit 25
 python3 fetch_artic.py --artist 'Georges Seurat' --style 'Post-Impressionism'
 ```
 
