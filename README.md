@@ -112,6 +112,7 @@ mkdir -p ~/.config/arty && echo '...' > ~/.config/arty/brave_api_key
 ```bash
 python3 fetch_brave.py search --artist 'Joan Miró' --dry-run    # preview, downloads nothing
 python3 fetch_brave.py search --artists-file modern_artists.txt --sites   # candidates → ~/arty/inbox
+#   favorites.txt works here too
 python3 fetch_brave.py review                                    # keep / reject / edit in the browser
 python3 process_collection.py --input ~/arty/brave
 ```
