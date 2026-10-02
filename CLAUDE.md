@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.2 — Last updated 2026-10-02
+**Version:** 1.3 — Last updated 2026-10-02
 
 ## What this project does
 
@@ -40,6 +40,7 @@ Pillow 10+ is required (`ImageFont.load_default(size=…)` and `textlength`).
 ```
 fetch_artic.py          Download artwork + metadata from the ARTIC API
 fetch_brave.py          Brave image search → ~/arty/inbox (review) → accept → ~/arty/brave
+review_server.py        Local keep/reject/edit page for the inbox (fetch_brave.py review)
 brave_domains.txt       Domain allowlist for fetch_brave.py (one per line, subdomains match)
 brave_search_sites.txt  Sites queried one by one by fetch_brave.py --sites (must be on the allowlist)
 modern_artists.txt      Artist list for fetch_brave.py ('Name' or 'Name | query')
@@ -133,10 +134,11 @@ constraining axis (fill-to-edge sizing — see architecture notes below).
 Note: `composite.py` uses `MAT_W = 72`; `frame_compositor.py` uses `MAT_W = 70`.
 They are independent implementations.
 
-**fetch_brave.py** — two subcommands:
+**fetch_brave.py** — three subcommands:
 ```
 python3 fetch_brave.py search --artist NAME | --artists-file PATH [--sites] [--dry-run] [--keep N]
-python3 fetch_brave.py accept
+python3 fetch_brave.py accept [--kept-only]
+python3 fetch_brave.py review [--port 8765] [--no-browser]
 ```
 API key from `BRAVE_API_KEY` or `~/.config/arty/brave_api_key` — never in the repo
 (it's public). Candidates go to `~/arty/inbox/{artist}/{stem}.jpg|.json` plus
@@ -153,6 +155,15 @@ and merges results (deduped by image URL); plain searches return mostly shops.
 `looks_like_junk()` also rejects shop hosts/paths and titles ending in "Print". Title/date come from `guess_title_and_date()`,
 a best-effort parse of the page title. Imports `slugify` from `fetch_artic`.
 Never commit fetched images — they're copyrighted (`.gitignore` covers jpg/json).
+
+**review_server.py** — stdlib `ThreadingHTTPServer` bound to 127.0.0.1 only.
+`GET /` renders the page with the inbox embedded as JSON; `GET /img/{artist}/{file}`
+serves candidates; `POST /api/{keep,edit,reject,restore,accept}` act on files.
+Every POST needs the `X-Arty-Token` header (random per run, embedded in the page)
+so other sites can't trigger actions. `_candidate()` rejects any path outside the
+inbox. Keep sets sidecar `"review": "keep"`; reject/restore move the .jpg+.json
+pair to/from `inbox/.rejected/{artist}/`; accept calls `fb.accept_inbox(kept_only=True)`.
+`inbox_artist_dirs()` skips hidden folders, so `.rejected` is never accepted.
 
 ## Extension points
 
@@ -275,3 +286,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | 1.0 | 2026-09-10 | Initial version tracking for this file; added `~/development/dev-practices/branching.md` and `doc-conventions.md` imports so this project follows the same branching/merge and living-doc discipline as the rest of the ecosystem. |
 | 1.1 | 2026-10-02 | Added `fetch_brave.py` (Brave image search → inbox review → accept into `~/arty/brave`), `brave_domains.txt` and `modern_artists.txt`; dry-run diagnostics (per-filter counts, top source domains, raw-results dump); MoMA-style and circa title parsing. |
 | 1.2 | 2026-10-02 | `fetch_brave.py --sites` (per-site `site:` searches from `brave_search_sites.txt`); shop-page and print/poster/book junk filtering; auction catalogue and dealer domains added to the allowlist. |
+| 1.3 | 2026-10-02 | `fetch_brave.py review` and `review_server.py`: local review page with Keep / Reject / Undo, inline title and date editing, Reject the rest, and Accept kept; `accept --kept-only`; accept logic refactored into `accept_one()` / `accept_inbox()`. |
