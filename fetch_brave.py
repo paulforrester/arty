@@ -36,6 +36,7 @@ import re
 import shutil
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -161,7 +162,7 @@ def hamming(a: int, b: int) -> int:
 
 
 _SEPARATORS = re.compile(r"\s+[-|–—:•]\s+|\s*\|\s*")
-_YEAR = re.compile(r"\b(?:c\.\s*)?(1[5-9]\d\d|20[0-2]\d)(?:\s*[–-]\s*(\d{2,4}))?\b")
+_YEAR = re.compile(r"\b(?:(?:c|ca|circa)\.?\s*)?(1[5-9]\d\d|20[0-2]\d)(?:\s*[–-]\s*(\d{2,4}))?\b")
 _SITE_WORDS = (
     "museum", "musée", "museo", "museu", "gallery", "galerie", "galleries",
     "wikipedia", "wikimedia", "commons", "moma", "christie", "sotheby",
@@ -205,10 +206,15 @@ def guess_title_and_date(raw_title: str, artist: str, domain: str = "") -> tuple
     kept = [s for s in segments if not is_noise(s)]
     title = kept[0] if kept else (segments[0] if segments else "")
 
-    # Strip 'by Artist', the date, and empty brackets left behind
+    # Strip 'by Artist' / leading 'Artist,' 'Artist:' 'Artist.' (MoMA style)
     for name in sorted(names, key=len, reverse=True):
         title = re.sub(rf"(?i)[,\s]*\bby\s+{re.escape(name)}\b", "", title)
-        title = re.sub(rf"(?i)^{re.escape(name)}\s*[,:]\s*", "", title)
+        title = re.sub(rf"(?i)^{re.escape(name)}\s*[,:.]\s*", "", title)
+    # 'Title. Place, Date' (MoMA style): keep the part before the first '. '
+    # when what follows contains the date
+    parts = re.split(r"(?<!\bc)(?<!\bca)\.\s", title, maxsplit=1)   # not 'c. 1952'
+    if len(parts) == 2 and _YEAR.search(parts[1]) and len(parts[0]) >= 3:
+        title = parts[0]
     title = _YEAR.sub("", title)
     title = re.sub(r"\(\s*\)", "", title)
     title = re.sub(r"\s{2,}", " ", title).strip(" ,.-–—:|")
@@ -285,24 +291,31 @@ def search_artist(name: str, query: str, args, key: str, allow: list[str],
     query = query or f"{name} {args.query_suffix}".strip()
     slug = slugify(name)
     out_dir = INBOX_DIR / slug
-    stats = {"artist": name, "results": 0, "allowed": 0, "saved": 0}
+    stats = {"artist": name, "results": 0, "seen": 0, "domain": 0, "junk": 0,
+             "size": 0, "allowed": 0, "saved": 0, "domains": Counter(), "raw": []}
 
     log.info("Searching Brave: %r", query)
     results = [normalise_result(r) for r in brave_image_search(query, args.count, key)]
     stats["results"] = len(results)
+    stats["raw"] = results
 
-    # Filter on what the search result already tells us
+    # Filter on what the search result already tells us, counting each reason
     seen_urls = set(ledger["urls"])
     candidates = []
     for r in results:
+        stats["domains"][r["domain"] or "(none)"] += 1
         if not r["image_url"] or r["image_url"] in seen_urls:
+            stats["seen"] += 1
             continue
         if not args.any_domain and not domain_allowed(r["domain"], allow):
+            stats["domain"] += 1
             continue
         if looks_like_junk(r["page_title"], r["page_url"], r["image_url"]):
+            stats["junk"] += 1
             continue
         w, h = r["width"], r["height"]
         if w and h and (max(w, h) < args.min_size or max(w, h) / min(w, h) > MAX_ASPECT):
+            stats["size"] += 1
             continue
         candidates.append(r)
     stats["allowed"] = len(candidates)
@@ -423,10 +436,30 @@ def run_search(args) -> None:
                 save_ledger(ledger)
 
     print()
-    print(f"{'Artist':<28}{'Results':>9}{'Allowed':>9}{'Saved':>7}")
+    cols = [("Results", "results"), ("Seen", "seen"), ("Off-list", "domain"),
+            ("Junk", "junk"), ("Size", "size"), ("Allowed", "allowed"),
+            ("Saved", "saved")]
+    print(f"{'Artist':<24}" + "".join(f"{h:>9}" for h, _ in cols))
     for s in all_stats:
-        print(f"{s['artist'][:27]:<28}{s['results']:>9}{s['allowed']:>9}{s['saved']:>7}")
-    if not args.dry_run and INBOX_DIR.exists():
+        print(f"{s['artist'][:23]:<24}" + "".join(f"{s[k]:>9}" for _, k in cols))
+
+    if args.dry_run or args.show_domains:
+        totals = Counter()
+        for s in all_stats:
+            totals.update(s["domains"])
+        print(f"\nTop {args.show_domains or 30} source sites across all results "
+              "(✓ = on the allowlist):")
+        for dom, n in totals.most_common(args.show_domains or 30):
+            mark = "✓" if args.any_domain or domain_allowed(dom, allow) else " "
+            print(f"  {mark} {n:>4}  {dom}")
+
+    if args.dry_run:
+        dump = INBOX_DIR / ".dry_run_results.json"
+        dump.parent.mkdir(parents=True, exist_ok=True)
+        dump.write_text(json.dumps({s["artist"]: s["raw"] for s in all_stats},
+                                   indent=1, ensure_ascii=False), encoding="utf-8")
+        print(f"\nRaw results saved to {dump}")
+    elif INBOX_DIR.exists():
         print(f"\nReview page: {write_review_page()}")
 
 
@@ -511,7 +544,11 @@ def main() -> None:
     s.add_argument("--any-domain", action="store_true",
                    help="ignore the allowlist (not recommended)")
     s.add_argument("--dry-run", action="store_true",
-                   help="list what would be downloaded; downloads nothing")
+                   help="list what would be downloaded and which sites results came "
+                        "from; downloads nothing")
+    s.add_argument("--show-domains", type=int, nargs="?", const=30, default=0,
+                   metavar="N", help="print the top N source sites (default 30; "
+                                     "always shown with --dry-run)")
 
     sub.add_parser("accept", help="move reviewed inbox candidates into ~/arty/brave")
 
