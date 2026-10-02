@@ -13,6 +13,7 @@ arty/
 ├── fetch_artic.py          # Download artwork + metadata from the ARTIC API
 ├── fetch_brave.py          # Find candidates via Brave image search, review, then accept
 ├── brave_domains.txt       # Domain allowlist for fetch_brave.py
+├── brave_search_sites.txt  # Sites searched one by one with fetch_brave.py --sites
 ├── modern_artists.txt      # Artist list for fetch_brave.py
 ├── wood_texture.py         # Procedural wood-grain texture module
 ├── styles.py               # Frame and mat style catalog (FRAME_STYLES, MAT_CONFIGS)
@@ -108,7 +109,7 @@ mkdir -p ~/.config/arty && echo '...' > ~/.config/arty/brave_api_key
 
 ```bash
 python3 fetch_brave.py search --artist 'Joan Miró' --dry-run    # preview, downloads nothing
-python3 fetch_brave.py search --artists-file modern_artists.txt  # candidates → ~/arty/inbox
+python3 fetch_brave.py search --artists-file modern_artists.txt --sites   # candidates → ~/arty/inbox
 open ~/arty/inbox/review.html                                    # look them over
 #   delete unwanted .jpg + .json pairs from ~/arty/inbox/{artist}/
 #   fix "title" / "date" in the .json sidecars where the guess is wrong
@@ -125,6 +126,8 @@ python3 process_collection.py --input ~/arty/brave
 | `--keep N` | `40` | Max candidates saved per artist |
 | `--min-size PX` | `800` | Minimum long edge |
 | `--allow-file PATH` | `brave_domains.txt` | Domain allowlist |
+| `--sites` | off | Search each artist on each site in the sites file (`<query> site:<site>`) — recommended |
+| `--sites-file PATH` | `brave_search_sites.txt` | Sites for `--sites` |
 | `--any-domain` | off | Ignore the allowlist (not recommended) |
 | `--dry-run` | off | List what would be downloaded, the top source sites, and save raw results to `~/arty/inbox/.dry_run_results.json` |
 | `--show-domains [N]` | off (30) | Print the top N source sites on a real run too |
@@ -133,8 +136,15 @@ The summary table shows how many results each filter removed (Seen, Off-list,
 Junk, Size). If Off-list is high, the top-sites list shows which sites to
 consider adding to `brave_domains.txt`.
 
+**Why `--sites`:** a plain image search for an artist returns mostly shops
+(eBay, Amazon, poster sites), so almost nothing passes the allowlist. Asking
+each museum or auction site directly returns their collection images instead.
+It costs one search per artist per site — 12 × 12 = 144 searches, about $0.72
+of the free monthly credit.
+
 Filtering: allowlisted domain → no merchandise words (mug, t-shirt, puzzle…)
-→ size and aspect checks → near-duplicate removal (dHash), keeping the largest
+and no shop pages (`store.` / `shop.` hosts, `/shop/` paths, titles ending in
+"Print") → size and aspect checks → near-duplicate removal (dHash), keeping the largest
 copy. `~/arty/inbox/.seen.json` remembers every image URL already fetched, so
 candidates you delete don't come back on the next search. Accepted works with a
 long edge under 1500 px get `"low_res": true`.

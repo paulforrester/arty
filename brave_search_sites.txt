@@ -1,0 +1,20 @@
+# Sites fetch_brave.py searches with --sites: one Brave search per artist per
+# site ("<artist> painting site:<site>"). 12 sites × 12 artists = 144 searches,
+# about $0.72 of the $5 monthly free credit. Every site here must also be in
+# brave_domains.txt, or its results are dropped.
+
+# Museums with strong modern collections
+moma.org
+metmuseum.org
+guggenheim.org
+nga.gov
+philamuseum.org
+centrepompidou.fr
+tate.org.uk
+
+# Auction houses, catalogues and dealers (also Buckels and Earle)
+christies.com
+sothebys.com
+invaluable.com
+liveauctioneers.com
+1stdibs.com

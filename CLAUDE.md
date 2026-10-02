@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.1 — Last updated 2026-10-02
+**Version:** 1.2 — Last updated 2026-10-02
 
 ## What this project does
 
@@ -41,6 +41,7 @@ Pillow 10+ is required (`ImageFont.load_default(size=…)` and `textlength`).
 fetch_artic.py          Download artwork + metadata from the ARTIC API
 fetch_brave.py          Brave image search → ~/arty/inbox (review) → accept → ~/arty/brave
 brave_domains.txt       Domain allowlist for fetch_brave.py (one per line, subdomains match)
+brave_search_sites.txt  Sites queried one by one by fetch_brave.py --sites (must be on the allowlist)
 modern_artists.txt      Artist list for fetch_brave.py ('Name' or 'Name | query')
 wood_texture.py         Procedural wood-grain texture module (importable)
 styles.py               Frame and mat style catalog — FRAME_STYLES and MAT_CONFIGS dicts
@@ -134,7 +135,7 @@ They are independent implementations.
 
 **fetch_brave.py** — two subcommands:
 ```
-python3 fetch_brave.py search --artist NAME | --artists-file PATH [--dry-run] [--keep N]
+python3 fetch_brave.py search --artist NAME | --artists-file PATH [--sites] [--dry-run] [--keep N]
 python3 fetch_brave.py accept
 ```
 API key from `BRAVE_API_KEY` or `~/.config/arty/brave_api_key` — never in the repo
@@ -146,7 +147,10 @@ moves the rest to `~/arty/brave/{artist}/image|meta` with `source: "brave"`,
 rejected candidates never return.
 `--dry-run` also prints per-filter rejection counts (Seen / Off-list / Junk /
 Size), the top source domains, and writes raw results to
-`inbox/.dry_run_results.json` — use these to tune `brave_domains.txt`. Title/date come from `guess_title_and_date()`,
+`inbox/.dry_run_results.json` — use these to tune `brave_domains.txt`.
+`--sites` runs `<query> site:<site>` for every site in `brave_search_sites.txt`
+and merges results (deduped by image URL); plain searches return mostly shops.
+`looks_like_junk()` also rejects shop hosts/paths and titles ending in "Print". Title/date come from `guess_title_and_date()`,
 a best-effort parse of the page title. Imports `slugify` from `fetch_artic`.
 Never commit fetched images — they're copyrighted (`.gitignore` covers jpg/json).
 
@@ -270,3 +274,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 |---|---|---|
 | 1.0 | 2026-09-10 | Initial version tracking for this file; added `~/development/dev-practices/branching.md` and `doc-conventions.md` imports so this project follows the same branching/merge and living-doc discipline as the rest of the ecosystem. |
 | 1.1 | 2026-10-02 | Added `fetch_brave.py` (Brave image search → inbox review → accept into `~/arty/brave`), `brave_domains.txt` and `modern_artists.txt`; dry-run diagnostics (per-filter counts, top source domains, raw-results dump); MoMA-style and circa title parsing. |
+| 1.2 | 2026-10-02 | `fetch_brave.py --sites` (per-site `site:` searches from `brave_search_sites.txt`); shop-page and print/poster/book junk filtering; auction catalogue and dealer domains added to the allowlist. |
