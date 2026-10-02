@@ -126,7 +126,12 @@ python3 process_collection.py --input ~/arty/brave
 | `--min-size PX` | `800` | Minimum long edge |
 | `--allow-file PATH` | `brave_domains.txt` | Domain allowlist |
 | `--any-domain` | off | Ignore the allowlist (not recommended) |
-| `--dry-run` | off | List what would be downloaded |
+| `--dry-run` | off | List what would be downloaded, the top source sites, and save raw results to `~/arty/inbox/.dry_run_results.json` |
+| `--show-domains [N]` | off (30) | Print the top N source sites on a real run too |
+
+The summary table shows how many results each filter removed (Seen, Off-list,
+Junk, Size). If Off-list is high, the top-sites list shows which sites to
+consider adding to `brave_domains.txt`.
 
 Filtering: allowlisted domain → no merchandise words (mug, t-shirt, puzzle…)
 → size and aspect checks → near-duplicate removal (dHash), keeping the largest

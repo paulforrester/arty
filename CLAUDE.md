@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.0 — Last updated 2026-09-10
+**Version:** 1.1 — Last updated 2026-10-02
 
 ## What this project does
 
@@ -143,7 +143,10 @@ API key from `BRAVE_API_KEY` or `~/.config/arty/brave_api_key` — never in the 
 moves the rest to `~/arty/brave/{artist}/image|meta` with `source: "brave"`,
 `copyrighted: true`, `private: true`, `low_res` (long edge < 1500 px).
 `inbox/.seen.json` records every fetched image URL and per-artist dHashes so
-rejected candidates never return. Title/date come from `guess_title_and_date()`,
+rejected candidates never return.
+`--dry-run` also prints per-filter rejection counts (Seen / Off-list / Junk /
+Size), the top source domains, and writes raw results to
+`inbox/.dry_run_results.json` — use these to tune `brave_domains.txt`. Title/date come from `guess_title_and_date()`,
 a best-effort parse of the page title. Imports `slugify` from `fetch_artic`.
 Never commit fetched images — they're copyrighted (`.gitignore` covers jpg/json).
 
@@ -266,3 +269,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-09-10 | Initial version tracking for this file; added `~/development/dev-practices/branching.md` and `doc-conventions.md` imports so this project follows the same branching/merge and living-doc discipline as the rest of the ecosystem. |
+| 1.1 | 2026-10-02 | Added `fetch_brave.py` (Brave image search → inbox review → accept into `~/arty/brave`), `brave_domains.txt` and `modern_artists.txt`; dry-run diagnostics (per-filter counts, top source domains, raw-results dump); MoMA-style and circa title parsing. |
