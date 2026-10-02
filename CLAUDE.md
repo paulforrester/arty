@@ -34,6 +34,9 @@ Pillow 10+ is required (`ImageFont.load_default(size=…)` and `textlength`).
 
 ```
 fetch_artic.py          Download artwork + metadata from the ARTIC API
+fetch_brave.py          Brave image search → ~/arty/inbox (review) → accept → ~/arty/brave
+brave_domains.txt       Domain allowlist for fetch_brave.py (one per line, subdomains match)
+modern_artists.txt      Artist list for fetch_brave.py ('Name' or 'Name | query')
 wood_texture.py         Procedural wood-grain texture module (importable)
 styles.py               Frame and mat style catalog — FRAME_STYLES and MAT_CONFIGS dicts
 style_selector.py       Auto-selects frame/mat from painting_analysis output + metadata
@@ -123,6 +126,21 @@ constraining axis (fill-to-edge sizing — see architecture notes below).
 
 Note: `composite.py` uses `MAT_W = 72`; `frame_compositor.py` uses `MAT_W = 70`.
 They are independent implementations.
+
+**fetch_brave.py** — two subcommands:
+```
+python3 fetch_brave.py search --artist NAME | --artists-file PATH [--dry-run] [--keep N]
+python3 fetch_brave.py accept
+```
+API key from `BRAVE_API_KEY` or `~/.config/arty/brave_api_key` — never in the repo
+(it's public). Candidates go to `~/arty/inbox/{artist}/{stem}.jpg|.json` plus
+`inbox/review.html`; the user deletes rejects and edits sidecars, then `accept`
+moves the rest to `~/arty/brave/{artist}/image|meta` with `source: "brave"`,
+`copyrighted: true`, `private: true`, `low_res` (long edge < 1500 px).
+`inbox/.seen.json` records every fetched image URL and per-artist dHashes so
+rejected candidates never return. Title/date come from `guess_title_and_date()`,
+a best-effort parse of the page title. Imports `slugify` from `fetch_artic`.
+Never commit fetched images — they're copyrighted (`.gitignore` covers jpg/json).
 
 ## Extension points
 

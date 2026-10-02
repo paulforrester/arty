@@ -11,6 +11,9 @@ presentations sized for a 4K TV (3840×2160).
 ```
 arty/
 ├── fetch_artic.py          # Download artwork + metadata from the ARTIC API
+├── fetch_brave.py          # Find candidates via Brave image search, review, then accept
+├── brave_domains.txt       # Domain allowlist for fetch_brave.py
+├── modern_artists.txt      # Artist list for fetch_brave.py
 ├── wood_texture.py         # Procedural wood-grain texture module
 ├── styles.py               # Frame and mat style catalog (FRAME_STYLES, MAT_CONFIGS)
 ├── style_selector.py       # Auto-selects frame/mat style from painting analysis + metadata
@@ -24,6 +27,8 @@ arty/
 │   └── {artist}/
 │       ├── image/      # Full-size JPEGs from IIIF
 │       └── meta/       # Companion JSON metadata
+├── inbox/              # fetch_brave.py candidates awaiting review (+ review.html)
+├── brave/              # Accepted Brave finds, same {artist}/image|meta layout
 └── processed/          # Framed 4K output
     └── {artist}/
         └── {stem}.jpg
@@ -79,6 +84,55 @@ python3 fetch_artic.py --artist 'Georges Seurat' --style 'Post-Impressionism'
 
 Images and metadata land under `OUTPUT_DIR` mirrored by artist name.
 Re-runs are idempotent — existing files are skipped.
+
+### 1b — Find copyrighted works with Brave image search (private use)
+
+For artists whose work isn't public domain, `fetch_brave.py` searches the
+[Brave Search API](https://api-dashboard.search.brave.com/) and only downloads
+from domains in `brave_domains.txt` (museums, foundations, auction houses,
+reputable galleries). Nothing reaches the collection without review.
+
+These images are generally still under copyright. They are tagged
+`"copyrighted": true, "private": true` in their metadata and are for private
+display at home only — don't publish, share or commit them.
+
+**API key** — a Brave Search plan includes $5 of free credit a month (about
+1,000 searches; one search per artist). Keep the key out of this public repo:
+
+```bash
+export BRAVE_API_KEY=...            # or:
+mkdir -p ~/.config/arty && echo '...' > ~/.config/arty/brave_api_key
+```
+
+**Workflow**
+
+```bash
+python3 fetch_brave.py search --artist 'Joan Miró' --dry-run    # preview, downloads nothing
+python3 fetch_brave.py search --artists-file modern_artists.txt  # candidates → ~/arty/inbox
+open ~/arty/inbox/review.html                                    # look them over
+#   delete unwanted .jpg + .json pairs from ~/arty/inbox/{artist}/
+#   fix "title" / "date" in the .json sidecars where the guess is wrong
+python3 fetch_brave.py accept                                    # → ~/arty/brave
+python3 process_collection.py --input ~/arty/brave
+```
+
+| Flag (search) | Default | Description |
+|------|---------|-------------|
+| `--artist NAME` / `--artists-file PATH` | — | One artist, or a file of `Name` or `Name \| custom query` lines |
+| `--query Q` | — | Custom search query (with `--artist`) |
+| `--query-suffix S` | `painting` | Appended to the artist name when there's no custom query |
+| `--count N` | `100` | Results requested per artist (API max 200) |
+| `--keep N` | `40` | Max candidates saved per artist |
+| `--min-size PX` | `800` | Minimum long edge |
+| `--allow-file PATH` | `brave_domains.txt` | Domain allowlist |
+| `--any-domain` | off | Ignore the allowlist (not recommended) |
+| `--dry-run` | off | List what would be downloaded |
+
+Filtering: allowlisted domain → no merchandise words (mug, t-shirt, puzzle…)
+→ size and aspect checks → near-duplicate removal (dHash), keeping the largest
+copy. `~/arty/inbox/.seen.json` remembers every image URL already fetched, so
+candidates you delete don't come back on the next search. Accepted works with a
+long edge under 1500 px get `"low_res": true`.
 
 ### 2 — Generate framed presentations
 
@@ -216,3 +270,6 @@ Artwork sourced from the
 [IIIF image service](https://iiif.io/).  All works are in the public domain.
 Metadata and images are provided under
 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+
+Works found with `fetch_brave.py` come from the sites listed in their metadata
+(`source_page_url`), are generally under copyright, and are for private use only.

@@ -1,0 +1,61 @@
+# Domains fetch_brave.py will download from (one per line; subdomains match).
+# Keep this to museums, foundations, auction houses, reputable galleries and
+# reference sites — sources that publish images lawfully. Add an artist's
+# official site or dealer when you find one.
+
+# Reference
+wikipedia.org
+wikimedia.org
+
+# US museums
+artic.edu
+metmuseum.org
+moma.org
+guggenheim.org
+nga.gov
+philamuseum.org
+clevelandart.org
+mfa.org
+whitney.org
+sfmoma.org
+lacma.org
+brooklynmuseum.org
+buffaloakg.org
+okeeffemuseum.org
+brandywine.org
+farnsworthmuseum.org
+thedali.org
+crystalbridges.org
+
+# European museums and foundations
+centrepompidou.fr
+centrepompidou-metz.fr
+museepicassoparis.fr
+museupicassobcn.cat
+museopicassomalaga.org
+fmirobcn.org
+salvador-dali.org
+musee-matisse-nice.org
+museoreinasofia.es
+museothyssen.org
+tate.org.uk
+lenbachhaus.de
+mam.paris.fr
+musee-orangerie.fr
+musee-orsay.fr
+stedelijk.nl
+kunstmuseumbasel.ch
+
+# Artist estates
+haring.com
+
+# Auction houses
+christies.com
+sothebys.com
+phillips.com
+bonhams.com
+
+# Galleries (Jim Buckels, Eyvind Earle)
+viningsgallery.com
+sapergalleries.com
+centralgalleries.com

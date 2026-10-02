@@ -1,0 +1,14 @@
+# Artists for fetch_brave.py — 'Name' or 'Name | custom search query'.
+# The name goes on the plaque; the query is what Brave searches for.
+Henri Matisse
+Pablo Picasso
+Salvador Dalí
+Joan Miró
+Jackson Pollock
+Wassily Kandinsky
+Georgia O'Keeffe
+Keith Haring
+Andrew Wyeth
+Jim Buckels | Jim Buckels lithograph
+Eyvind Earle | Eyvind Earle painting serigraph
+Theodor Seuss Geisel | Dr. Seuss secret art painting
