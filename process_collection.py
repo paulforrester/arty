@@ -33,6 +33,7 @@ from pathlib import Path
 from PIL import Image
 
 import frame_compositor
+import matte_crop
 import painting_analysis
 import style_selector
 import styles
@@ -79,6 +80,7 @@ def process_one(
         frame_style      str
         mat_config       str
         use_mat          bool
+        matte_cropped    bool  source matte / background was stripped
         elapsed_seconds  float
         error            str | None
     """
@@ -92,6 +94,7 @@ def process_one(
         "frame_style":     "",
         "mat_config":      "",
         "use_mat":         True,
+        "matte_cropped":   False,
         "elapsed_seconds": 0.0,
         "error":           None,
     }
@@ -106,6 +109,10 @@ def process_one(
             except Exception as exc:
                 # Non-fatal — continue with empty meta; note it in error field.
                 result["error"] = f"metadata read failed: {exc}"
+
+        # Strip any matte / product-photo background baked into the source so
+        # analysis, style selection and framing all see only the painting.
+        artwork, result["matte_cropped"] = matte_crop.crop_matte(artwork)
 
         analysis = painting_analysis.analyse(artwork)
         chosen   = style_selector.select(analysis, meta)
@@ -298,6 +305,7 @@ def main() -> None:
                 ok += 1
                 print(f"[{completed}/{total}] {result['label']}"
                       f" → frame:{result['frame_style']} mat:{result['mat_config']}"
+                      f"{' [matte cropped]' if result.get('matte_cropped') else ''}"
                       f" ({result['elapsed_seconds']:.1f}s)")
             else:
                 failed += 1

@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.5 — Last updated 2026-10-02
+**Version:** 1.6 — Last updated 2026-10-04
 
 ## What this project does
 
@@ -50,6 +50,7 @@ styles.py               Frame and mat style catalog — FRAME_STYLES and MAT_CON
 style_selector.py       Auto-selects frame/mat from painting_analysis output + metadata
 frame_compositor.py     Core compositing module — PIL Image in, PIL Image out
 process_collection.py   CLI runner that walks artic/ and calls frame_compositor
+matte_crop.py           Strips a baked-in matte / product-photo background — PIL Image in, (Image, bool) out
 painting_analysis.py    Perceptual colour analysis — PIL Image in, dict out
 composite.py            Legacy standalone processor (superseded; kept for reference)
 ```
@@ -197,7 +198,8 @@ The style is then available via `--override-frame ebony`. To make
 
 ## Architecture notes
 
-**Pipeline per image** — three stages run inside each worker:
+**Pipeline per image** — four stages run inside each worker:
+0. `matte_crop.crop_matte(artwork)` → `(artwork, cropped)` — runs *before* analysis so style selection and framing see only the painting
 1. `painting_analysis.analyse(artwork)` → perceptual colour dict (`palette_temperature`, `accent_colors`, `brightness`, `contrast`, `edge_brightness`)
 2. `style_selector.select(analysis, meta)` → `{frame_style, mat_config, mat_accent_color, mat}`
 3. `frame_compositor.compose(artwork, meta, frame_style=…, mat_config=…, mat_accent_color=…, mat=…)`
@@ -207,6 +209,21 @@ Image out; no file I/O, no CLI). `process_collection.py` is the CLI wrapper
 that handles discovery, loading, saving, skipping, logging, and parallel dispatch.
 `--override-frame` / `--override-mat` bypass stages 1–2 for that dimension.
 `--no-mat` forces `mat=False` regardless of the auto-detected value.
+
+**Matte / background crop** (`matte_crop.crop_matte`): many Brave results are
+scans or product photos with white paper margins, a studio background or a
+mat baked in, which then end up framed *inside* arty's own mat. Each of the
+four sides is judged independently: a side counts as matte when its outer 2 %
+ring is light (≥185), near-neutral (chroma ≤45) and near-uniform (std ≤26).
+Scanning inward, the first row/column with >0.4 % pixels differing from that
+colour by >55 is the content edge. Guards: the first pass needs ≥3 sides to
+have a matte (a pale sky or snowfield on one side is not a matte); up to 3
+passes strip nested borders (background, then magnet/mat body); a pass must
+remove ≥1 % per side; never crops below 25 % of the original area. Dark
+borders are never cropped. After a crop arty still adds its own mat as usual
+(`style_selector` decides from the cropped painting). Tuning constants are
+at the top of `matte_crop.py`. On the current collection ~37 % of images
+(mostly print/drawing paper margins) are cropped.
 
 **Parallel processing** (`process_collection`): images are processed using
 `concurrent.futures.ProcessPoolExecutor` with `--workers N` parallel processes
@@ -290,3 +307,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | 1.3 | 2026-10-02 | `fetch_brave.py review` and `review_server.py`: local review page with Keep / Reject / Undo, inline title and date editing, Reject the rest, and Accept kept; `accept --kept-only`; accept logic refactored into `accept_one()` / `accept_inbox()`. |
 | 1.4 | 2026-10-02 | Added `favorites.txt` (Monet, Renoir, Degas, Cézanne, van Gogh, Gauguin, Valadon, Manet) for `fetch_artic.py --artists-file`; Degas is listed under ARTIC's name, Hilaire Germain Edgar Degas. |
 | 1.5 | 2026-10-02 | `favorites.txt` now serves both fetchers: Degas listed as "Edgar Degas" (ARTIC finds him through the phrase-match fallback; Brave searches need the common name). |
+| 1.6 | 2026-10-04 | Added `matte_crop.py`: processing now strips a matte / white background baked into the source image before analysis (per-side detection, nested passes), so product shots such as the Dalí magnet fill the frame instead of floating small inside it. `process_one` reports `matte_cropped`. |
