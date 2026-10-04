@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.7 — Last updated 2026-10-04
+**Version:** 1.8 — Last updated 2026-10-04
 
 ## What this project does
 
@@ -50,7 +50,8 @@ styles.py               Frame and mat style catalog — FRAME_STYLES and MAT_CON
 style_selector.py       Auto-selects frame/mat from painting_analysis output + metadata
 frame_compositor.py     Core compositing module — PIL Image in, PIL Image out
 process_collection.py   CLI runner that walks artic/ and calls frame_compositor
-matte_crop.py           Strips a baked-in matte / product-photo background — PIL Image in, (Image, bool) out
+matte_crop.py           Detects a baked-in matte / product-photo background — PIL Image in, crop box / (Image, bool) out; CLI prints the box as JSON
+crop_decisions.py       Reads ~/arty/crops.json (per-image crop choices from ArtyPicker's Crop mode) and applies them
 painting_analysis.py    Perceptual colour analysis — PIL Image in, dict out
 composite.py            Legacy standalone processor (superseded; kept for reference)
 ```
@@ -199,7 +200,7 @@ The style is then available via `--override-frame ebony`. To make
 ## Architecture notes
 
 **Pipeline per image** — four stages run inside each worker:
-0. `matte_crop.crop_matte(artwork)` → `(artwork, cropped)` — runs *before* analysis so style selection and framing see only the painting
+0. `crop_decisions.apply(artwork, decision)` → `(artwork, label)` — runs *before* analysis so style selection and framing see only the painting. The decision comes from `~/arty/crops.json`; images with no entry get automatic matte detection (`crop_decisions.DEFAULT_MODE`)
 1. `painting_analysis.analyse(artwork)` → perceptual colour dict (`palette_temperature`, `accent_colors`, `brightness`, `contrast`, `edge_brightness`)
 2. `style_selector.select(analysis, meta)` → `{frame_style, mat_config, mat_accent_color, mat}`
 3. `frame_compositor.compose(artwork, meta, frame_style=…, mat_config=…, mat_accent_color=…, mat=…)`
@@ -209,6 +210,18 @@ Image out; no file I/O, no CLI). `process_collection.py` is the CLI wrapper
 that handles discovery, loading, saving, skipping, logging, and parallel dispatch.
 `--override-frame` / `--override-mat` bypass stages 1–2 for that dimension.
 `--no-mat` forces `mat=False` regardless of the auto-detected value.
+
+**Crop decisions** (`crop_decisions.py`, `~/arty/crops.json`): automatic matte
+detection cannot be right 100 % of the time, so ArtyPicker's Crop mode lets
+Paul choose per image between `original` (no crop), `auto` (accept the
+detector's box) and `manual` (rubber-band box, stored as `[l, t, r, b]` in
+source pixels with the source `size`). The pipeline applies the stored choice;
+an image with no entry falls back to `DEFAULT_MODE` (currently `"auto"`). A
+manual box whose `size` no longer matches the file is ignored (`stale-manual`,
+original used) rather than guessed at. Keys are `<collection>/<artist_dir>/<stem>`
+NFC-normalised. `ARTY_CROPS` overrides the file path (used for testing).
+`python3 matte_crop.py PATH` prints `{"width","height","box"}` for the app.
+The app reprocesses an image with `process_collection.py --file PATH --force`.
 
 **Matte / background crop** (`matte_crop.crop_matte`): many Brave results are
 scans or product photos with white paper margins, a studio background or a
@@ -317,3 +330,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | 1.5 | 2026-10-02 | `favorites.txt` now serves both fetchers: Degas listed as "Edgar Degas" (ARTIC finds him through the phrase-match fallback; Brave searches need the common name). |
 | 1.6 | 2026-10-04 | Added `matte_crop.py`: processing now strips a matte / white background baked into the source image before analysis (per-side detection, nested passes), so product shots such as the Dalí magnet fill the frame instead of floating small inside it. `process_one` reports `matte_cropped`. |
 | 1.7 | 2026-10-04 | `matte_crop.py` tuned after review of sample crops: leaves a 10–15 px border; tolerance now depends on border colour (neutral vs tinted paper); small marks in margins (stamps, catalogue text) are ignored; nested passes run until nothing changes (max 8). Fixes lopsided crops on plate-mark prints (Degas, Rodin, Gauguin). |
+| 1.8 | 2026-10-04 | Automatic matte crop is no longer final: added `crop_decisions.py` and `~/arty/crops.json` so per-image choices (original / auto / manual box) made in ArtyPicker's Crop mode drive `process_collection`; unreviewed images keep automatic detection. `matte_crop.py` split into `detect_box` / `crop_matte` and gained a JSON CLI. |

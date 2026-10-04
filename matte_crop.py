@@ -76,11 +76,11 @@ def _crop_box(small: np.ndarray, min_sides: int) -> tuple[int, int, int, int] | 
     return l, t, w - r, h - b
 
 
-def crop_matte(img: Image.Image) -> tuple[Image.Image, bool]:
+def detect_box(img: Image.Image) -> tuple[int, int, int, int] | None:
     """
-    Return (image, cropped).  Repeatedly strips light, near-uniform borders
-    until none remain.  Returns the original image untouched when nothing is
-    found or the crop would be implausibly small.
+    Return the crop box (left, top, right, bottom) in source pixels — right and
+    bottom exclusive, including the thin kept border — or None when no matte is
+    found or cropping would be implausibly aggressive.
     """
     rgb = img.convert("RGB")
     ow, oh = rgb.size
@@ -105,13 +105,38 @@ def crop_matte(img: Image.Image) -> tuple[Image.Image, bool]:
         box = (box[0] + l, box[1] + t, box[0] + r, box[1] + b)
 
     if box == (0, 0, ow, oh):
-        return img, False
+        return None
     if (box[2] - box[0]) * (box[3] - box[1]) < _MIN_AREA * ow * oh:
-        return img, False
+        return None
 
     # Leave a thin sliver of the original border around the content so the
     # edge doesn't look sawn off; clamped to the original image bounds.
     keep = int(min(_KEEP_MAX, max(_KEEP_MIN, round(_KEEP_FRAC * min(ow, oh)))))
-    box = (max(0, box[0] - keep), max(0, box[1] - keep),
-           min(ow, box[2] + keep), min(oh, box[3] + keep))
-    return rgb.crop(box), True
+    return (max(0, box[0] - keep), max(0, box[1] - keep),
+            min(ow, box[2] + keep), min(oh, box[3] + keep))
+
+
+def crop_matte(img: Image.Image) -> tuple[Image.Image, bool]:
+    """Return (image, cropped).  The image is returned untouched when no matte is found."""
+    box = detect_box(img)
+    if box is None:
+        return img, False
+    return img.convert("RGB").crop(box), True
+
+
+def main() -> None:
+    """CLI used by the ArtyPicker Crop mode:  matte_crop.py PATH  ->  JSON on stdout."""
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Detect a baked-in matte; print the crop box as JSON.")
+    parser.add_argument("path", help="Image file")
+    args = parser.parse_args()
+    with Image.open(args.path) as im:
+        w, h = im.size
+        box = detect_box(im)
+    print(json.dumps({"width": w, "height": h, "box": list(box) if box else None}))
+
+
+if __name__ == "__main__":
+    main()
