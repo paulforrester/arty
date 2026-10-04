@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.6 — Last updated 2026-10-04
+**Version:** 1.7 — Last updated 2026-10-04
 
 ## What this project does
 
@@ -214,16 +214,24 @@ that handles discovery, loading, saving, skipping, logging, and parallel dispatc
 scans or product photos with white paper margins, a studio background or a
 mat baked in, which then end up framed *inside* arty's own mat. Each of the
 four sides is judged independently: a side counts as matte when its outer 2 %
-ring is light (≥185), near-neutral (chroma ≤45) and near-uniform (std ≤26).
-Scanning inward, the first row/column with >0.4 % pixels differing from that
-colour by >55 is the content edge. Guards: the first pass needs ≥3 sides to
-have a matte (a pale sky or snowfield on one side is not a matte); up to 3
-passes strip nested borders (background, then magnet/mat body); a pass must
-remove ≥1 % per side; never crops below 25 % of the original area. Dark
-borders are never cropped. After a crop arty still adds its own mat as usual
-(`style_selector` decides from the cropped painting). Tuning constants are
-at the top of `matte_crop.py`. On the current collection ~37 % of images
-(mostly print/drawing paper margins) are cropped.
+ring is light (≥185), not strongly tinted (chroma ≤45) and near-uniform
+(std ≤26). Scanning inward, the content edge is the first row/column holding a
+blob of "different" pixels. "Different" depends on the border colour: >44 from
+a neutral white/grey border (photo background, magnet body — ignores soft
+shadows and bevels) but >40 from tinted paper (cream paper has noisy channels;
+lower values leave paper margins, higher cut into plate tone and faint pencil).
+Blobs smaller than 0.15 % of the image after joining nearby marks are ignored,
+so a collector's stamp or catalogue text in the margin doesn't pin one side
+and leave the crop lopsided. Guards: the first pass needs ≥3 sides to have a
+matte (a pale sky or snowfield on one side is not a matte); up to 8 passes
+strip nested borders (background → magnet/mat body → paper margin → plate
+mark); a pass must remove ≥1 % per side; never crops below 25 % of the
+original area. Dark borders are never cropped. A 10–15 px sliver of the
+original border (0.6 % of the short side, clamped) is left around the result
+so edges don't look sawn off. After a crop arty still adds its own mat as
+usual (`style_selector` decides from the cropped painting). Tuning constants
+are at the top of `matte_crop.py`. On the current collection ~35 % of images
+(mostly print/drawing paper margins) are cropped; it costs ~0.1 s/image.
 
 **Parallel processing** (`process_collection`): images are processed using
 `concurrent.futures.ProcessPoolExecutor` with `--workers N` parallel processes
@@ -308,3 +316,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | 1.4 | 2026-10-02 | Added `favorites.txt` (Monet, Renoir, Degas, Cézanne, van Gogh, Gauguin, Valadon, Manet) for `fetch_artic.py --artists-file`; Degas is listed under ARTIC's name, Hilaire Germain Edgar Degas. |
 | 1.5 | 2026-10-02 | `favorites.txt` now serves both fetchers: Degas listed as "Edgar Degas" (ARTIC finds him through the phrase-match fallback; Brave searches need the common name). |
 | 1.6 | 2026-10-04 | Added `matte_crop.py`: processing now strips a matte / white background baked into the source image before analysis (per-side detection, nested passes), so product shots such as the Dalí magnet fill the frame instead of floating small inside it. `process_one` reports `matte_cropped`. |
+| 1.7 | 2026-10-04 | `matte_crop.py` tuned after review of sample crops: leaves a 10–15 px border; tolerance now depends on border colour (neutral vs tinted paper); small marks in margins (stamps, catalogue text) are ignored; nested passes run until nothing changes (max 8). Fixes lopsided crops on plate-mark prints (Degas, Rodin, Gauguin). |
