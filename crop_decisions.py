@@ -13,6 +13,8 @@ File format
           "mode":    "manual",            # "original" | "auto" | "manual"
           "box":     [l, t, r, b],        # manual only; source pixels, r/b exclusive
           "size":    [w, h],              # source dimensions when the box was drawn
+          "frame":   false,               # optional; false = leave unframed (default: framed)
+          "mat":     true,                # optional; true/false forces a mat on/off (default: automatic)
           "updated": "2026-10-04T09:12:00Z"
         }
       }
@@ -68,6 +70,22 @@ def load(path: Path = CROPS_PATH) -> dict[str, dict]:
 def decision_for(img_path: Path, path: Path = CROPS_PATH) -> dict | None:
     key = key_for(img_path)
     return load(path).get(key) if key else None
+
+
+def options(decision: dict | None) -> tuple[bool, bool | None]:
+    """
+    (frame, mat) from a stored decision.
+
+    frame: False only when the decision says ``"frame": false`` — the image is
+           then output alone (no frame, mat or plaque).
+    mat:   True / False when the decision forces it; None = let style_selector
+           decide.  Ignored when unframed.
+    """
+    if not decision:
+        return True, None
+    frame = decision.get("frame") is not False
+    mat = decision.get("mat")
+    return frame, mat if isinstance(mat, bool) else None
 
 
 def apply(img: Image.Image, decision: dict | None) -> tuple[Image.Image, str]:

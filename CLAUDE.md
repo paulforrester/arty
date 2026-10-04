@@ -3,7 +3,7 @@
 
 # arty — developer context
 
-**Version:** 1.8 — Last updated 2026-10-04
+**Version:** 1.9 — Last updated 2026-10-04
 
 ## What this project does
 
@@ -223,6 +223,17 @@ NFC-normalised. `ARTY_CROPS` overrides the file path (used for testing).
 `python3 matte_crop.py PATH` prints `{"width","height","box"}` for the app.
 The app reprocesses an image with `process_collection.py --file PATH --force`.
 
+A decision can also carry two presentation options, set from the **Framed** pane
+of ArtyPicker's crop dialog: `"frame": false` leaves the image **unframed** — it
+is output alone (no frame, mat or plaque), scaled to fit the 4K canvas on the
+black background (`frame_compositor.compose_unframed`, skips analysis); and
+`"mat": true|false` forces the mat **on** or **off** (absent = `style_selector`
+decides). Absent `frame` = framed. Precedence for the mat: the batch `--no-mat`
+flag, then the image's `mat` choice, then automatic. `crop_decisions.options()`
+reads both. For live previews the app passes
+`process_collection.py --file PATH --output TMPDIR --decision '<json>'`, which
+uses that decision instead of the stored one (only valid with `--file`).
+
 **Matte / background crop** (`matte_crop.crop_matte`): many Brave results are
 scans or product photos with white paper margins, a studio background or a
 mat baked in, which then end up framed *inside* arty's own mat. Each of the
@@ -331,3 +342,4 @@ frame_compositor.compose(img, meta).save("/tmp/test.jpg", quality=95)
 | 1.6 | 2026-10-04 | Added `matte_crop.py`: processing now strips a matte / white background baked into the source image before analysis (per-side detection, nested passes), so product shots such as the Dalí magnet fill the frame instead of floating small inside it. `process_one` reports `matte_cropped`. |
 | 1.7 | 2026-10-04 | `matte_crop.py` tuned after review of sample crops: leaves a 10–15 px border; tolerance now depends on border colour (neutral vs tinted paper); small marks in margins (stamps, catalogue text) are ignored; nested passes run until nothing changes (max 8). Fixes lopsided crops on plate-mark prints (Degas, Rodin, Gauguin). |
 | 1.8 | 2026-10-04 | Automatic matte crop is no longer final: added `crop_decisions.py` and `~/arty/crops.json` so per-image choices (original / auto / manual box) made in ArtyPicker's Crop mode drive `process_collection`; unreviewed images keep automatic detection. `matte_crop.py` split into `detect_box` / `crop_matte` and gained a JSON CLI. |
+| 1.9 | 2026-10-04 | Per-image presentation options in `crops.json` decisions: `frame` (false = unframed, new `compose_unframed`) and `mat` (true/false forces the mat on/off; absent = automatic). `process_collection --decision JSON` (with `--file`) previews a decision without saving it; `process_one` gained `decision_override` and reports `framed`. Verified all combinations on the Wyeth. |
