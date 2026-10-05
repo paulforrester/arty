@@ -32,6 +32,7 @@ from pathlib import Path
 
 from PIL import Image
 
+import crop_decisions
 import frame_compositor
 import painting_analysis
 import style_selector
@@ -64,11 +65,15 @@ def process_one(
     override_frame: str | None = None,
     override_mat:   str | None = None,
     no_mat:         bool = False,
+    decision_override: dict | None = None,
 ) -> dict:
     """
-    Process a single artwork end-to-end: analyse → select style →
+    Process a single artwork end-to-end: crop → analyse → select style →
     composite → save.  Never raises; all errors are captured in the
     returned dict so the pool can deliver them safely to the main process.
+
+    *decision_override* replaces the stored crop/frame/mat decision (used by
+    ArtyPicker's live preview); None means look the image up in crops.json.
 
     Returns
     -------
@@ -79,6 +84,9 @@ def process_one(
         frame_style      str
         mat_config       str
         use_mat          bool
+        framed           bool  False when the decision says leave it unframed
+        matte_cropped    bool  the image was cropped before framing
+        crop             str   what was applied: original | auto | auto-default | manual | stale-manual | none
         elapsed_seconds  float
         error            str | None
     """
@@ -92,6 +100,9 @@ def process_one(
         "frame_style":     "",
         "mat_config":      "",
         "use_mat":         True,
+        "framed":          True,
+        "matte_cropped":   False,
+        "crop":            "",
         "elapsed_seconds": 0.0,
         "error":           None,
     }
@@ -107,26 +118,44 @@ def process_one(
                 # Non-fatal — continue with empty meta; note it in error field.
                 result["error"] = f"metadata read failed: {exc}"
 
-        analysis = painting_analysis.analyse(artwork)
-        chosen   = style_selector.select(analysis, meta)
+        # Apply the crop chosen in ArtyPicker (~/arty/crops.json), or automatic
+        # matte detection for images nobody has reviewed, so analysis, style
+        # selection and framing all see only the painting.
+        decision = (decision_override if decision_override is not None
+                    else crop_decisions.decision_for(p))
+        artwork, result["crop"] = crop_decisions.apply(artwork, decision)
+        result["matte_cropped"] = result["crop"] in ("auto", "auto-default", "manual")
+        frame_on, mat_pref = crop_decisions.options(decision)
+        result["framed"] = frame_on
 
-        frame_style      = override_frame or chosen["frame_style"]
-        mat_config       = override_mat   or chosen["mat_config"]
-        mat_accent_color = chosen["mat_accent_color"]
-        use_mat          = False if no_mat else chosen.get("mat", True)
+        if not frame_on:
+            # Unframed: just the picture on the 4K canvas — no analysis needed.
+            result["use_mat"] = False
+            composed = frame_compositor.compose_unframed(artwork)
+            analysis = None
+        else:
+            analysis = painting_analysis.analyse(artwork)
+            chosen   = style_selector.select(analysis, meta)
 
-        result["frame_style"] = frame_style
-        result["mat_config"]  = mat_config
-        result["use_mat"]     = use_mat
+            frame_style      = override_frame or chosen["frame_style"]
+            mat_config       = override_mat   or chosen["mat_config"]
+            mat_accent_color = chosen["mat_accent_color"]
+            # Precedence: --no-mat (batch flag) > this image's choice > automatic.
+            use_mat = False if no_mat else (
+                mat_pref if mat_pref is not None else chosen.get("mat", True))
 
-        composed = frame_compositor.compose(
-            artwork, meta,
-            frame_style=frame_style,
-            mat_config=mat_config,
-            mat_accent_color=mat_accent_color,
-            seed=_seed(p.stem),
-            mat=use_mat,
-        )
+            result["frame_style"] = frame_style
+            result["mat_config"]  = mat_config
+            result["use_mat"]     = use_mat
+
+            composed = frame_compositor.compose(
+                artwork, meta,
+                frame_style=frame_style,
+                mat_config=mat_config,
+                mat_accent_color=mat_accent_color,
+                seed=_seed(p.stem),
+                mat=use_mat,
+            )
 
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         composed.save(str(out_path), "JPEG", quality=95, subsampling=0)
@@ -201,6 +230,12 @@ def main() -> None:
         metavar="PATH",
         help="Process a single image file instead of the whole collection",
     )
+    parser.add_argument(
+        "--decision",
+        metavar="JSON",
+        help="With --file: use this crop/frame/mat decision instead of the one in "
+             "crops.json (ArtyPicker's live preview; same fields as a crops.json entry)",
+    )
     args = parser.parse_args()
 
     n_workers = max(1, min(args.workers, cpu_count))
@@ -214,6 +249,9 @@ def main() -> None:
             print(f"Error: file not found: {args.file}", file=sys.stderr)
             sys.exit(1)
         all_images = [img_file]
+    elif args.decision:
+        print("Error: --decision requires --file", file=sys.stderr)
+        sys.exit(2)
     else:
         in_dir = Path(args.input)
         all_images = sorted(in_dir.glob("*/image/*.jpg"))
@@ -226,6 +264,15 @@ def main() -> None:
     jobs:    list[tuple] = []
     skipped: int         = 0
 
+    decision_override = None
+    if args.decision:
+        try:
+            decision_override = json.loads(args.decision)
+            assert isinstance(decision_override, dict)
+        except (ValueError, AssertionError):
+            print("Error: --decision must be a JSON object", file=sys.stderr)
+            sys.exit(2)
+
     for img_path in all_images:
         artist_dir = img_path.parent.parent
         stem       = img_path.stem
@@ -237,7 +284,8 @@ def main() -> None:
             continue
 
         jobs.append((img_path, meta_path, out_path,
-                     args.override_frame, args.override_mat, args.no_mat))
+                     args.override_frame, args.override_mat, args.no_mat,
+                     decision_override))
 
     total = len(jobs)
 
@@ -297,7 +345,8 @@ def main() -> None:
             if result["success"]:
                 ok += 1
                 print(f"[{completed}/{total}] {result['label']}"
-                      f" → frame:{result['frame_style']} mat:{result['mat_config']}"
+                      f" → {'UNFRAMED' if not result.get('framed', True) else 'frame:' + result['frame_style'] + ' mat:' + (result['mat_config'] if result['use_mat'] else 'none')}"
+                      f"{' [crop:' + result['crop'] + ']' if result.get('crop') not in ('', 'none', 'original') else ''}"
                       f" ({result['elapsed_seconds']:.1f}s)")
             else:
                 failed += 1

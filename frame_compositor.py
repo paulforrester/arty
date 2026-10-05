@@ -607,3 +607,20 @@ def compose(
     canvas = _edge_shadow(canvas, fx, fy, fow, foh)
 
     return canvas
+
+
+def compose_unframed(artwork: Image.Image) -> Image.Image:
+    """
+    Return a 3840×2160 PIL Image: *artwork* alone — no frame, no mat, no plaque —
+    scaled to fit the canvas (aspect preserved, upscaled if small) and centred
+    on the near-black background.
+    """
+    art   = artwork.convert("RGB")
+    scale = min(TV_W / art.width, TV_H / art.height)
+    w, h  = max(1, round(art.width * scale)), max(1, round(art.height * scale))
+    art   = art.resize((w, h), Image.LANCZOS)
+
+    canvas = Image.new("RGB", (TV_W, TV_H), BG_COLOR)
+    canvas.paste(art, ((TV_W - w) // 2, (TV_H - h) // 2))
+    return canvas
+
